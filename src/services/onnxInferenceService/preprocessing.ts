@@ -4,7 +4,7 @@ import { ImageTensorModule } from './nativeImageTensor';
 /**
  * Default MiewID v4 normalization (ImageNet statistics).
  */
-const MIEWID_DEFAULTS = {
+export const MIEWID_DEFAULTS = {
   inputSize: [440, 440] as [number, number],
   normalize: {
     mean: [0.485, 0.456, 0.406] as [number, number, number],

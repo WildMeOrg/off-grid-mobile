@@ -10,6 +10,12 @@ on:
       - main
       - wildlife-reid
 
+env:
+  ELEBOOK_CONFIG_FILE: deployment.example.json
+
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: macos-latest
@@ -29,6 +35,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install dependencies
         run: npm ci
@@ -56,7 +65,11 @@ jobs:
         run: npm ci
 
       - name: Type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      - name: Check batch evaluation tooling
+        shell: pwsh
+        run: ./__tests__/scripts/run-golden-batch.Tests.ps1
 
   test:
     runs-on: macos-latest
@@ -77,8 +90,38 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Ruby dependencies
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
       - name: Install JS dependencies
         run: npm ci
+
+      - name: Configure test deployment
+        run: npm run configure
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: bundle exec pod install
+
+      - name: Select available iOS simulator
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const { appendFileSync } = require('node:fs');
+          const inventory = JSON.parse(execFileSync('xcrun', ['simctl', 'list', 'devices', 'available', '--json'], { encoding: 'utf8' }));
+          const simulator = Object.entries(inventory.devices)
+            .filter(([runtime]) => runtime.includes('.iOS-'))
+            .flatMap(([, devices]) => devices)
+            .find(device => device.isAvailable && device.name.startsWith('iPhone'));
+          if (!simulator) throw new Error('No available iPhone simulator is installed.');
+          appendFileSync(process.env.GITHUB_ENV, `IOS_TEST_DESTINATION=platform=iOS Simulator,id=${simulator.udid}\n`);
+          NODE
 
       - name: Test
         run: npm test
@@ -125,11 +168,34 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build Android Debug
-        run: cd android && ./gradlew assembleDebug
+        run: |
+          npm run configure
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Create ephemeral CI signing key
+        run: |
+          keytool -genkeypair \
+            -keystore android/app/ci-release.keystore \
+            -storepass ci-only-password \
+            -keypass ci-only-password \
+            -alias elebook-ci \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -dname "CN=Mobile CI, O=CI, C=US"
 
       - name: Build Android Release
+        env:
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_STORE_FILE: ci-release.keystore
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_STORE_PASSWORD: ci-only-password
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_KEY_ALIAS: elebook-ci
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_KEY_PASSWORD: ci-only-password
         run: cd android && ./gradlew assembleRelease

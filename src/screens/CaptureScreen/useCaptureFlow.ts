@@ -1,247 +1,136 @@
 import { useState, useCallback } from 'react';
-import { Alert, Platform } from 'react-native';
+import { Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { wildlifePipeline } from '../../services/wildlifePipeline';
-import { buildEmbeddingDatabase } from '../../services/embeddingDatabaseBuilder';
 import { useWildlifeStore } from '../../stores/wildlifeStore';
-import { packManager } from '../../services/packManager';
-import { checkEmbeddingModelCompatibility } from '../../services/miewidModelManager';
-import type { SpeciesConfig } from '../../services/wildlifePipeline/types';
-import type { DetectorConfig, EmbeddingPackManifest, MiewIDModelStatus } from '../../types';
 import type { RootStackParamList } from '../../navigation/types';
-import logger from '../../utils/logger';
-
-/**
- * Load the detector config JSON from the pack directory.
- * Falls back to a safe default if loading fails.
- *
- * TODO(P0): Once packs include real detector_config.json files,
- * remove the fallback and require the config to exist.
- */
-async function loadDetectorConfig(
-  packDir: string,
-  manifest: EmbeddingPackManifest | null,
-): Promise<DetectorConfig> {
-  try {
-    if (!manifest) {
-      return DEFAULT_DETECTOR_CONFIG;
-    }
-    const configPath = `${packDir}/${manifest.detectorModel.configFile}`;
-    const RNFS = require('react-native-fs');
-    const content = await RNFS.readFile(configPath, 'utf8');
-    return JSON.parse(content);
-  } catch {
-    // Fallback until packs ship real detector configs
-    return DEFAULT_DETECTOR_CONFIG;
-  }
-}
-
-/** Load a pack's manifest, or null when unreadable (fallbacks apply). */
-async function loadManifestSafe(
-  packDir: string,
-): Promise<EmbeddingPackManifest | null> {
-  try {
-    return await packManager.loadManifest(`${packDir}/manifest.json`);
-  } catch {
-    return null;
-  }
-}
-
-const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
-  modelFile: '',
-  architecture: 'yolov5',
-  inputSize: [640, 640],
-  inputChannels: 3,
-  channelOrder: 'RGB',
-  normalize: { mean: [0, 0, 0], std: [1, 1, 1], scale: 1 / 255 },
-  confidenceThreshold: 0.25,
-  nmsThreshold: 0.45,
-  maxDetections: 100,
-  outputFormat: 'yolov5',
-  classLabels: ['animal'],
-  outputSpec: {
-    boxFormat: 'cxcywh',
-    coordinateType: 'normalized',
-    layout: '[1, num_detections, 5+num_classes]',
-  },
-};
+import {
+  errorMessage,
+  getDeviceLocation,
+  getDeviceInfo,
+  checkBatchResourceWarnings,
+  confirmProceedDespiteWarning,
+  prepareSpeciesConfigs,
+  runPipelineForOnePhoto,
+} from './captureFlowHelpers';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-/**
- * Attempt to get the device's current GPS coordinates.
- * Returns null if unavailable — GPS is best-effort since the app
- * may be used offline or without location permissions.
- *
- * TODO: Integrate @react-native-community/geolocation or
- * expo-location once native setup is in place.
- */
-async function getDeviceLocation(): Promise<{
-  lat: number;
-  lon: number;
-  accuracy: number;
-} | null> {
-  // GPS integration requires native module setup that is out of scope
-  // for this wiring task. Return null for now; Task 5.x will add
-  // actual Geolocation calls.
-  return null;
-}
-
-/** Build device info from React Native Platform API. */
-function getDeviceInfo(): { model: string; os: string } {
-  return {
-    model: Platform.OS,
-    os: `${Platform.OS} ${Platform.Version}`,
-  };
-}
-
-/** Human-readable explanation for each non-ready model status. */
-const MODEL_STATUS_MESSAGES: Record<Exclude<MiewIDModelStatus, 'ready'>, string> = {
-  missing:
-    'The MiewID embedding model is not installed on this device. Download it from Settings before capturing.',
-  downloading:
-    'The MiewID embedding model is still downloading. Try again once the download completes.',
-  corrupt:
-    'The installed MiewID embedding model file is corrupt. Re-download it from Settings.',
-  incompatible:
-    'The installed MiewID embedding model is incompatible with the loaded packs. Update the model or packs.',
-};
-
 export function useCaptureFlow() {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  );
   const navigation = useNavigation<NavigationProp>();
-  const packs = useWildlifeStore((s) => s.packs);
-  const miewidModel = useWildlifeStore((s) => s.miewidModel);
+  const packs = useWildlifeStore(s => s.packs);
+  const miewidModel = useWildlifeStore(s => s.miewidModel);
 
   const processPhoto = useCallback(
     async (photoUri: string) => {
-      if (!miewidModel || miewidModel.status !== 'ready') {
-        const message = miewidModel
-          ? MODEL_STATUS_MESSAGES[
-              miewidModel.status as Exclude<MiewIDModelStatus, 'ready'>
-            ]
-          : MODEL_STATUS_MESSAGES.missing;
-        Alert.alert('MiewID model not ready', message);
-        return;
-      }
-
       setIsProcessing(true);
       try {
-        // Quarantined packs failed integrity validation — their embeddings
-        // or index cannot be trusted until re-validated.
-        const healthyPacks = packs.filter((pack) => pack.status !== 'quarantined');
-
-        // Exclude packs whose embeddings live in a different model space —
-        // matching across major MiewID versions produces meaningless scores.
-        const compatiblePacks = healthyPacks.filter((pack) => {
-          const compatibility = checkEmbeddingModelCompatibility(
-            miewidModel.version,
-            pack.embeddingModelVersion,
-          );
-          if (compatibility === 'incompatible') {
-            logger.warn(
-              `[CaptureFlow] Excluding pack ${pack.id}: embedding model ${pack.embeddingModelVersion} incompatible with installed ${miewidModel.version}`,
-            );
-            return false;
-          }
-          if (compatibility === 'minor-mismatch') {
-            logger.warn(
-              `[CaptureFlow] Pack ${pack.id} embedding model ${pack.embeddingModelVersion} minor-mismatches installed ${miewidModel.version}; proceeding`,
-            );
-          }
-          return true;
-        });
-
-        // Group packs by compatibility identity: packs sharing a detector
-        // and embedding space run ONE detector pass and match against ONE
-        // merged database. Distinct groups (different feature class or
-        // detector) each get their own pass — never a mixed database.
-        const groups = new Map<string, typeof compatiblePacks>();
-        for (const pack of compatiblePacks) {
-          const key = [
-            pack.species,
-            pack.featureClass,
-            pack.detectorModelFile,
-            pack.embeddingModelVersion,
-          ].join('|');
-          groups.set(key, [...(groups.get(key) ?? []), pack]);
-        }
-
-        const { localIndividuals } = useWildlifeStore.getState();
-        const speciesConfigs: SpeciesConfig[] = await Promise.all(
-          Array.from(groups.values()).map(async (groupPacks) => {
-            const primary = groupPacks[0];
-            const manifest = await loadManifestSafe(primary.packDir);
-            return {
-              packId: primary.id,
-              species: primary.species,
-              detectorModelPath: primary.detectorModelFile,
-              detectorConfig: await loadDetectorConfig(primary.packDir, manifest),
-              embeddingDatabase: await buildEmbeddingDatabase(
-                primary.species,
-                groupPacks,
-                localIndividuals,
-              ),
-              embeddingInputSize: manifest?.embeddingModel.inputSize,
-              embeddingNormalize: manifest?.embeddingModel.normalize,
-            };
-          }),
-        );
-
-        const gps = await getDeviceLocation();
-        const deviceInfo = getDeviceInfo();
-
-        const result = await wildlifePipeline.processPhoto({
-          photoUri,
-          speciesConfigs,
-          miewidModelPath: miewidModel.path,
-        });
-
-        // Total failure: nothing completed, nothing worth saving.
-        if (result.detections.length === 0 && result.errors.length > 0) {
-          Alert.alert(
-            'Detection Failed',
-            result.errors
-              .map((e) => (e.species ? `${e.species}: ${e.message}` : e.message))
-              .join('\n'),
-          );
+        const speciesConfigs = await prepareSpeciesConfigs(miewidModel, packs);
+        if (!speciesConfigs) {
           return;
         }
 
-        // Save observation to store
-        useWildlifeStore.getState().addObservation({
-          id: result.observationId,
-          photoUri: result.photoUri,
+        const gps = await getDeviceLocation();
+        const deviceInfo = getDeviceInfo();
+        const outcome = await runPipelineForOnePhoto(photoUri, speciesConfigs, {
           gps,
-          timestamp: new Date().toISOString(),
           deviceInfo,
-          fieldNotes: null,
-          detections: result.detections,
-          createdAt: new Date().toISOString(),
+          miewidModel,
         });
 
+        if (!outcome.ok) {
+          Alert.alert('Detection Failed', outcome.message);
+          return;
+        }
+
         navigation.navigate('DetectionResults', {
-          observationId: result.observationId,
+          observationId: outcome.observationId,
         });
 
         // Partial failure: the observation is saved with what completed;
         // tell the user what was lost.
-        if (result.errors.length > 0) {
+        if (outcome.errors.length > 0) {
           Alert.alert(
             'Some detections failed',
-            result.errors
-              .map((e) => (e.species ? `${e.species}: ${e.message}` : e.message))
+            outcome.errors
+              .map(e => (e.species ? `${e.species}: ${e.message}` : e.message))
               .join('\n'),
           );
         }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Unknown error';
-        Alert.alert('Detection Failed', message);
+        Alert.alert('Detection Failed', errorMessage(error));
       } finally {
         setIsProcessing(false);
+      }
+    },
+    [miewidModel, packs, navigation],
+  );
+
+  /**
+   * Process many already-taken photos sequentially (one interpreter, one
+   * photo at a time -- no concurrency). Unlike processPhoto, this never
+   * navigates per-photo; it lands on the Observations tab once the whole
+   * batch finishes so the person reviews at their own pace.
+   */
+  const processBatch = useCallback(
+    async (photoUris: string[]) => {
+      if (photoUris.length === 0) {
+        return;
+      }
+
+      setIsProcessing(true);
+      setBatchProgress({ current: 0, total: photoUris.length });
+      try {
+        const speciesConfigs = await prepareSpeciesConfigs(miewidModel, packs);
+        if (!speciesConfigs) {
+          return;
+        }
+
+        const warning = await checkBatchResourceWarnings();
+        if (warning && !(await confirmProceedDespiteWarning(warning, photoUris.length))) {
+          return;
+        }
+
+        // Looked up once for the whole batch, not per photo -- these are
+        // already-taken gallery photos, so re-querying GPS per photo would
+        // only add per-photo permission/timeout latency without making the
+        // location any more accurate.
+        const context = {
+          gps: await getDeviceLocation(),
+          deviceInfo: getDeviceInfo(),
+          miewidModel,
+        };
+
+        let succeeded = 0;
+        const failures: string[] = [];
+        for (let i = 0; i < photoUris.length; i += 1) {
+          setBatchProgress({ current: i + 1, total: photoUris.length });
+          const outcome = await runPipelineForOnePhoto(photoUris[i], speciesConfigs, context);
+          if (outcome.ok) {
+            succeeded += 1;
+          } else {
+            failures.push(`Photo ${i + 1}: ${outcome.message}`);
+          }
+        }
+
+        navigation.navigate('Main', { screen: 'ObservationsTab' });
+
+        const summary = `Saved ${succeeded} of ${photoUris.length} photo${photoUris.length === 1 ? '' : 's'} as observations.`;
+        if (failures.length > 0) {
+          Alert.alert('Batch import finished with errors', `${summary}\n\n${failures.join('\n')}`);
+        } else {
+          Alert.alert('Batch import complete', summary);
+        }
+      } catch (error) {
+        Alert.alert('Batch import failed', errorMessage(error));
+      } finally {
+        setIsProcessing(false);
+        setBatchProgress(null);
       }
     },
     [miewidModel, packs, navigation],
@@ -258,11 +147,21 @@ export function useCaptureFlow() {
     const result = await launchImageLibrary({
       mediaType: 'photo',
       quality: 1,
+      selectionLimit: 0,
     });
-    if (result.assets?.[0]?.uri) {
-      await processPhoto(result.assets[0].uri);
-    }
-  }, [processPhoto]);
+    const uris = (result.assets ?? [])
+      .map(asset => asset.uri)
+      .filter((uri): uri is string => !!uri);
 
-  return { isProcessing, takePhoto, chooseFromGallery };
+    if (uris.length === 0) {
+      return;
+    }
+    if (uris.length === 1) {
+      await processPhoto(uris[0]);
+    } else {
+      await processBatch(uris);
+    }
+  }, [processPhoto, processBatch]);
+
+  return { isProcessing, batchProgress, takePhoto, chooseFromGallery };
 }

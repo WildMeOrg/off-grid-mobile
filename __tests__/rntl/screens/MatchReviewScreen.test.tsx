@@ -17,7 +17,8 @@
  */
 
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import RNFS from 'react-native-fs';
 
 // ---------------------------------------------------------------------------
 // Navigation mocks (must be before component import)
@@ -92,6 +93,7 @@ const makeDetection = (overrides: Record<string, any> = {}) => ({
     submitterId: null,
     projectId: null,
   },
+  ganeshaSubmissionId: null,
   ...overrides,
 });
 
@@ -115,7 +117,9 @@ const mockUpdateDetection = jest.fn();
 const mockAddLocalIndividual = jest.fn();
 const mockAddEmbeddingToLocalIndividual = jest.fn();
 const mockGetNextFieldId = jest.fn(() => 'FIELD-001');
+const mockLoadPackIndex = jest.fn().mockResolvedValue([]);
 let mockObservations = [makeObservation()];
+let mockPacks: Array<Record<string, any>> = [];
 const mockLocalIndividuals = [
   {
     localId: 'ind-2',
@@ -133,6 +137,7 @@ const mockLocalIndividuals = [
 const mockGetState = () => ({
   observations: mockObservations,
   localIndividuals: mockLocalIndividuals,
+  packs: mockPacks,
   updateDetection: mockUpdateDetection,
   addLocalIndividual: mockAddLocalIndividual,
   addEmbeddingToLocalIndividual: mockAddEmbeddingToLocalIndividual,
@@ -148,6 +153,12 @@ jest.mock('../../../src/stores/wildlifeStore', () => {
   return { useWildlifeStore: hook };
 });
 
+jest.mock('../../../src/services/packManager', () => ({
+  packManager: {
+    loadPackIndex: (...args: any[]) => mockLoadPackIndex(...args),
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Import component under test
 // ---------------------------------------------------------------------------
@@ -159,7 +170,9 @@ import { MatchReviewScreen } from '../../../src/screens/MatchReviewScreen';
 describe('MatchReviewScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockLoadPackIndex.mockResolvedValue([]);
     mockObservations = [makeObservation()];
+    mockPacks = [];
   });
 
   // ==========================================================================
@@ -176,10 +189,10 @@ describe('MatchReviewScreen', () => {
     expect(getByTestId('cropped-detection-image')).toBeTruthy();
   });
 
-  it('shows detection species and confidence', () => {
-    const { getByText } = render(<MatchReviewScreen />);
+  it('shows detection species without a confidence percentage', () => {
+    const { getByText, queryByText } = render(<MatchReviewScreen />);
     expect(getByText('zebra_plains')).toBeTruthy();
-    expect(getByText('95%')).toBeTruthy();
+    expect(queryByText('95%')).toBeNull();
   });
 
   it('shows candidates list', () => {
@@ -193,10 +206,45 @@ describe('MatchReviewScreen', () => {
     expect(getByTestId('candidate-ind-2')).toBeTruthy();
   });
 
-  it('shows candidate scores as percentages', () => {
+  it('shows a High confidence band and a confirmation-required notice instead of a raw score', () => {
+    const { getByText, getAllByText, queryByText } = render(<MatchReviewScreen />);
+    expect(getByText('High \u00b7 Candidate 1')).toBeTruthy();
+    expect(getByText('High \u00b7 Candidate 2')).toBeTruthy();
+    expect(getAllByText('Researcher confirmation required')).toHaveLength(2);
+    expect(queryByText('92%')).toBeNull();
+    expect(queryByText('85%')).toBeNull();
+  });
+
+  it('shows a Medium confidence band for a candidate scored 0.60-0.79', () => {
+    mockObservations = [
+      makeObservation([
+        makeDetection({
+          matchResult: {
+            topCandidates: [makeCandidate({ individualId: 'ind-1', score: 0.65, source: 'pack' })],
+            approvedIndividual: null,
+            reviewStatus: 'pending' as const,
+          },
+        }),
+      ]),
+    ];
     const { getByText } = render(<MatchReviewScreen />);
-    expect(getByText('92%')).toBeTruthy();
-    expect(getByText('85%')).toBeTruthy();
+    expect(getByText('Medium \u00b7 Candidate 1')).toBeTruthy();
+  });
+
+  it('shows a Low confidence band for a candidate scored below 0.60', () => {
+    mockObservations = [
+      makeObservation([
+        makeDetection({
+          matchResult: {
+            topCandidates: [makeCandidate({ individualId: 'ind-1', score: 0.4, source: 'pack' })],
+            approvedIndividual: null,
+            reviewStatus: 'pending' as const,
+          },
+        }),
+      ]),
+    ];
+    const { getByText } = render(<MatchReviewScreen />);
+    expect(getByText('Low \u00b7 Candidate 1')).toBeTruthy();
   });
 
   it('shows source badges on candidates', () => {
@@ -208,6 +256,49 @@ describe('MatchReviewScreen', () => {
   it('resolves local individual name from store', () => {
     const { getByText } = render(<MatchReviewScreen />);
     expect(getByText('Stripe Boy')).toBeTruthy();
+  });
+
+  it('resolves pack individual name and reference photo from the pack index', async () => {
+    (RNFS.stat as jest.Mock).mockImplementation(async (filepath: string) => ({
+      canonicalPath: filepath,
+      isFile: () => filepath.endsWith('.jpg'),
+      isDirectory: () => filepath === '/data/packs/example-project',
+    }));
+    mockPacks = [
+      {
+        id: 'example-project',
+        packDir: '/data/packs/example-project',
+        species: 'zebra_plains',
+        referencePhotosDir: '/data/packs/example-project/reference_photos',
+        indexFile: '/data/packs/example-project/embeddings/index.json',
+      },
+    ];
+    mockLoadPackIndex.mockResolvedValue([
+      {
+        id: 'ind-1',
+        name: 'Thomas',
+        alternateId: null,
+        sex: 'male',
+        lifeStage: 'adult',
+        firstSeen: null,
+        lastSeen: null,
+        encounterCount: 5,
+        embeddingCount: 10,
+        embeddingOffset: 0,
+        referencePhotos: ['ref_01.jpg', 'ref_02.jpg'],
+        notes: null,
+      },
+    ]);
+
+    const { getByText, getByTestId } = render(<MatchReviewScreen />);
+
+    await waitFor(() => expect(getByText('Thomas')).toBeTruthy());
+    expect(mockLoadPackIndex).toHaveBeenCalledWith(
+      '/data/packs/example-project/embeddings/index.json',
+    );
+    expect(getByTestId('candidate-photo-ind-1').props.source.uri).toBe(
+      'file:///data/packs/example-project/reference_photos/ind-1/ref_01.jpg',
+    );
   });
 
   // ==========================================================================
@@ -351,6 +442,28 @@ describe('MatchReviewScreen', () => {
     expect(mockUpdateDetection).not.toHaveBeenCalled();
     expect(mockAddLocalIndividual).not.toHaveBeenCalled();
     expect(mockGoBack).toHaveBeenCalled();
+  });
+
+  // ==========================================================================
+  // Bottom inset (Android gesture/navigation bar regression)
+  // ==========================================================================
+
+  it('pushes the footer (No Match / Skip) above the device bottom inset instead of a fixed padding', () => {
+    const { useSafeAreaInsets } = require('react-native-safe-area-context');
+    (useSafeAreaInsets as jest.Mock).mockReturnValue({
+      top: 0,
+      right: 0,
+      bottom: 48,
+      left: 0,
+    });
+
+    const { getByTestId } = render(<MatchReviewScreen />);
+    const footer = getByTestId('match-review-footer');
+    const flattened = Object.assign(
+      {},
+      ...(Array.isArray(footer.props.style) ? footer.props.style : [footer.props.style]),
+    );
+    expect(flattened.paddingBottom).toBeGreaterThanOrEqual(48);
   });
 
   // ==========================================================================

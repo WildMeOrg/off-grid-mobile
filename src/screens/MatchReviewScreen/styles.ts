@@ -43,10 +43,6 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
     ...TYPOGRAPHY.h3,
     color: colors.text,
   },
-  confidenceText: {
-    ...TYPOGRAPHY.meta,
-    color: colors.textMuted,
-  },
 
   // Candidates list
   candidatesHeader: {
@@ -115,10 +111,20 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
     gap: SPACING.sm,
     marginTop: SPACING.xs,
   },
-  candidateScore: {
+  confidenceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  candidateRank: {
     ...TYPOGRAPHY.bodySmall,
     color: colors.primary,
     fontWeight: '600' as const,
+  },
+  confirmationNotice: {
+    ...TYPOGRAPHY.metaSmall,
+    color: colors.textMuted,
+    marginTop: SPACING.xs,
   },
   sourceBadge: {
     paddingHorizontal: SPACING.sm,
@@ -146,7 +152,7 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
   // Footer actions
   footer: {
     paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
+    paddingTop: SPACING.md,
     gap: SPACING.sm,
   },
   newIndividualButton: {

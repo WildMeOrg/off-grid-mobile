@@ -38,7 +38,15 @@ target 'OffgridMobile' do
     # Set C++20 for all pods and deployment target
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
-        config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++20'
+        # fmt's consteval-based format-string checking (FMT_USE_CONSTEVAL) trips a
+        # spurious "not a constant expression" error under newer Xcode/Clang when
+        # built as C++20. Building fmt as C++17 makes its own feature-detection
+        # (FMT_CPLUSPLUS < 201709L) disable that codepath; fmt has no C++20 requirement.
+        if target.name == 'fmt'
+          config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'gnu++17'
+        else
+          config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++20'
+        end
         config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
       end
     end

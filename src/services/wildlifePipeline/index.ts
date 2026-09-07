@@ -1,5 +1,6 @@
 import type { Detection } from '../../types';
 import { onnxInferenceService } from '../onnxInferenceService';
+import { embeddingInferenceService } from '../embeddingInferenceService';
 import { embeddingMatchService } from '../embeddingMatchService';
 import { ImageTensorModule } from '../onnxInferenceService/nativeImageTensor';
 import { generateId } from '../../utils/generateId';
@@ -31,6 +32,7 @@ class WildlifePipeline {
       photoUri,
       speciesConfigs,
       miewidModelPath,
+      miewidModelFormat = 'onnx',
       embeddingInputSize,
       embeddingNormalize,
     } = params;
@@ -43,8 +45,8 @@ class WildlifePipeline {
     // every detection, so a broken model would waste all detector inference.
     if (speciesConfigs.length > 0) {
       try {
-        if (!onnxInferenceService.isModelLoaded(miewidModelPath)) {
-          await onnxInferenceService.loadModel(miewidModelPath, 'embedding');
+        if (!embeddingInferenceService.isModelLoaded(miewidModelPath, miewidModelFormat)) {
+          await embeddingInferenceService.loadModel(miewidModelPath, miewidModelFormat);
         }
       } catch (error) {
         logger.error('[WildlifePipeline] MiewID load failed:', error);
@@ -162,7 +164,7 @@ class WildlifePipeline {
       );
 
       stage = 'embedding';
-      const embeddingOutput = await onnxInferenceService.extractEmbedding(
+      const embeddingOutput = await embeddingInferenceService.extractEmbedding(
         croppedImageUri,
         args.miewidModelPath,
         {
@@ -201,6 +203,7 @@ class WildlifePipeline {
             submitterId: null,
             projectId: null,
           },
+          ganeshaSubmissionId: null,
         },
       };
     } catch (error) {

@@ -3,7 +3,7 @@
  *
  * Tests for the wildlife home dashboard including:
  * - Screen renders with correct testID
- * - "Wildlife ID" title display
+ * - "EleBook" title display
  * - Quick capture button rendering and navigation
  * - Active packs summary with count and total individuals
  * - Empty packs state message
@@ -77,6 +77,7 @@ const createPack = (
   overrides: Partial<EmbeddingPack> = {},
 ): EmbeddingPack => ({
   id: 'pack-1',
+  packVersion: '2025-06-15T00:00:00Z',
   species: 'Megaptera novaeangliae',
   featureClass: 'fluke',
   displayName: 'Humpback Whale — Fluke',
@@ -142,9 +143,9 @@ describe('WildlifeHomeScreen', () => {
       expect(getByTestId('wildlife-home-screen')).toBeTruthy();
     });
 
-    it('shows "Wildlife ID" title', () => {
+    it('shows "EleBook" title', () => {
       const { getByText } = render(<WildlifeHomeScreen />);
-      expect(getByText('Wildlife ID')).toBeTruthy();
+      expect(getByText('EleBook')).toBeTruthy();
     });
   });
 
@@ -166,6 +167,12 @@ describe('WildlifeHomeScreen', () => {
       const { getByTestId } = render(<WildlifeHomeScreen />);
       fireEvent.press(getByTestId('capture-button'));
       expect(mockNavigate).toHaveBeenCalledWith('Capture');
+    });
+
+    it('settings button navigates to Settings', () => {
+      const { getByTestId } = render(<WildlifeHomeScreen />);
+      fireEvent.press(getByTestId('home-settings-button'));
+      expect(mockNavigate).toHaveBeenCalledWith('Settings');
     });
   });
 
@@ -280,6 +287,7 @@ describe('WildlifeHomeScreen', () => {
           submitterId: null,
           projectId: null,
         },
+        ganeshaSubmissionId: null,
       };
 
       useWildlifeStore.setState({
@@ -317,6 +325,7 @@ describe('WildlifeHomeScreen', () => {
           submitterId: null,
           projectId: null,
         },
+        ganeshaSubmissionId: null,
       };
 
       useWildlifeStore.setState({

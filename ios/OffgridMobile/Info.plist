@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Off Grid</string>
+	<string>EleBook</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -16,6 +16,19 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>org.ganesha.elebook.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>org.ganesha.elebook</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -26,6 +39,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs access to your camera to photograph wildlife for on-device identification.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app uses your location to tag observations with GPS coordinates. Location is optional and only captured while you are recording an observation.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app needs access to your microphone for voice-to-text transcription using Whisper.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

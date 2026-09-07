@@ -52,6 +52,7 @@ export const PackDetailScreen: React.FC = () => {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
   const pack = useWildlifeStore((s) => s.packs.find((p) => p.id === packId));
+  const miewidModel = useWildlifeStore((s) => s.miewidModel);
 
   if (!pack) {
     return (
@@ -78,6 +79,15 @@ export const PackDetailScreen: React.FC = () => {
         <Text style={styles.value}>
           {pack.individualCount} known individuals
         </Text>
+
+        <Text style={styles.label}>Pack Version</Text>
+        <Text style={styles.value}>{pack.packVersion}</Text>
+
+        <Text style={styles.label}>Embedding Model Version</Text>
+        <Text style={styles.value}>{pack.embeddingModelVersion}</Text>
+
+        <Text style={styles.label}>Installed MiewID Version</Text>
+        <Text style={styles.value}>{miewidModel?.version ?? 'Not installed'}</Text>
 
         <Text style={styles.label}>Embedding Dimension</Text>
         <Text style={styles.value}>{pack.embeddingDim}</Text>

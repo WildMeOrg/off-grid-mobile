@@ -41,6 +41,14 @@ node_modules/
 npm-debug.log
 yarn-error.log
 
+/deployment.local.json
+/src/config/deployment.generated.json
+*.apk
+*.aab
+*.jks
+*.p12
+*.pfx
+
 # fastlane
 #
 # It is recommended to not store the screenshots in the git repo. Instead, use fastlane to re-generate the

@@ -37,7 +37,24 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
   },
   footer: {
     paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
+    paddingTop: SPACING.md,
+    gap: SPACING.sm,
+  },
+  notesLabel: {
+    ...TYPOGRAPHY.labelSmall,
+    color: colors.textSecondary,
+  },
+  notesInput: {
+    minHeight: 72,
+    maxHeight: 120,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    color: colors.text,
+    backgroundColor: colors.surface,
+    textAlignVertical: 'top' as const,
   },
   saveAllButton: {
     backgroundColor: colors.primary,
@@ -53,23 +70,29 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
     ...TYPOGRAPHY.h2,
     color: colors.background,
   },
+  saveAllButtonDisabled: {
+    opacity: 0.6,
+  },
   // Bounding box styles
   boundingBox: {
     position: 'absolute' as const,
     borderWidth: 2,
     borderRadius: 4,
     justifyContent: 'flex-end' as const,
+    alignItems: 'flex-start' as const,
   },
   boxLabel: {
-    paddingHorizontal: SPACING.xs,
-    paddingVertical: 2,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    maxWidth: '100%' as const,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
   },
   boxLabelText: {
-    ...TYPOGRAPHY.labelSmall,
+    ...TYPOGRAPHY.bodySmall,
+    fontWeight: '600' as const,
     color: '#FFFFFF',
-  },
-  boxConfidenceText: {
-    ...TYPOGRAPHY.metaSmall,
-    color: '#FFFFFF',
+    flexShrink: 1,
   },
 });

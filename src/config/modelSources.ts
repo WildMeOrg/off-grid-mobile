@@ -1,11 +1,8 @@
+import type { ModelFormat } from '../types/wildlife';
+
 /**
- * Download sources for on-device models.
- *
- * Hosting for the published MiewID ONNX is not yet decided (HF repo, CXL
- * CDN, or GitHub release asset — integration plan open item #5), so the
- * download service is driven entirely by this config: fill in `url` and
- * `expectedSha256` once hosting lands and the download path lights up
- * without code changes.
+ * Per-acquisition model source from GET /models/{model_name}/latest.
+ * The API supplies a fresh signed URL and artifact integrity metadata.
  */
 export interface ModelSource {
   name: string;
@@ -16,14 +13,12 @@ export interface ModelSource {
   expectedSizeBytes?: number;
   /** Extra request headers (e.g. auth for a private HF repo). */
   headers?: Record<string, string>;
+  /** Which runtime this artifact needs — see ModelFormat. */
+  format: ModelFormat;
 }
 
-// TODO(hosting): populate url + expectedSha256 when MiewID v4.1 FP16 hosting
-// is decided. Local artifact: miewid_v4_1_fp16.onnx, 103,859,027 bytes.
-export const MIEWID_MODEL_SOURCE: ModelSource = {
-  name: 'miewid',
-  version: '4.1.0',
-  url: '',
-  expectedSha256: '',
-  expectedSizeBytes: 103_859_027,
-};
+/** Model name key the backend's `/models/{model_name}/latest` endpoint expects. */
+export const MIEWID_MODEL_NAME = 'miewid';
+
+/** Model name key for the Android LiteRT artifact. */
+export const MIEWID_LITERT_MODEL_NAME = 'miewid-litert';

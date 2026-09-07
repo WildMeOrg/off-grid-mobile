@@ -12,15 +12,34 @@
  * - Shows error alert when pipeline fails
  * - Shows cancel state when user cancels photo selection
  * - Saves observation with device info from Platform API
- * - Passes GPS as null (stub) to pipeline and observation
+ * - Saves best-effort GPS metadata on observations
  */
 
 import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
-import { Alert, Platform } from 'react-native';
+import Geolocation, {
+  type GeolocationError,
+  type GeolocationResponse,
+} from '@react-native-community/geolocation';
+import { Alert, PermissionsAndroid, Platform } from 'react-native';
+import RNFS from 'react-native-fs';
+import DeviceInfo from 'react-native-device-info';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { wildlifePipeline } from '../../../src/services/wildlifePipeline';
 import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
+import { initDatabase } from '../../../src/services/database';
+import * as database from '../../../src/services/database';
+
+// database is wrapped so one test can force insertObservationWithDetections
+// to reject; every other test passes through to the real (op-sqlite-mocked)
+// implementation unchanged.
+jest.mock('../../../src/services/database', () => {
+  const actual = jest.requireActual('../../../src/services/database');
+  return {
+    ...actual,
+    insertObservationWithDetections: jest.fn(actual.insertObservationWithDetections),
+  };
+});
 
 // Mock navigation
 const mockNavigate = jest.fn();
@@ -81,9 +100,23 @@ import { CaptureScreen } from '../../../src/screens/CaptureScreen';
 const mockProcessPhoto = wildlifePipeline.processPhoto as jest.Mock;
 const mockLaunchCamera = launchCamera as jest.Mock;
 const mockLaunchImageLibrary = launchImageLibrary as jest.Mock;
+const mockGetCurrentPosition = Geolocation.getCurrentPosition as jest.MockedFunction<
+  typeof Geolocation.getCurrentPosition
+>;
+const mockRequestLocationPermission =
+  PermissionsAndroid.request as jest.MockedFunction<
+    typeof PermissionsAndroid.request
+  >;
+
+const MOCK_GPS = {
+  lat: 1.2345,
+  lon: 2.3456,
+  accuracy: 7,
+};
 
 const makeTestPack = (overrides: Record<string, unknown> = {}) => ({
   id: 'pack-1',
+  packVersion: '2026-04-25T00:00:00Z',
   species: 'horse_wild',
   featureClass: 'face',
   displayName: 'Wild Horse - Face',
@@ -131,9 +164,29 @@ const MOCK_DETECTION = {
     submitterId: null,
     projectId: null,
   },
+  ganeshaSubmissionId: null,
 };
 
 describe('CaptureScreen', () => {
+  const originalPlatformOsDescriptor = Object.getOwnPropertyDescriptor(
+    Platform,
+    'OS',
+  );
+
+  beforeAll(async () => {
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      get: () => 'android',
+    });
+    await initDatabase();
+  });
+
+  afterAll(() => {
+    if (originalPlatformOsDescriptor) {
+      Object.defineProperty(Platform, 'OS', originalPlatformOsDescriptor);
+    }
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     useWildlifeStore.setState({
@@ -147,6 +200,7 @@ describe('CaptureScreen', () => {
         sizeBytes: 1000,
         status: 'ready',
         verifiedAt: '2026-08-01T00:00:00.000Z',
+        format: 'onnx',
       },
     });
     mockProcessPhoto.mockResolvedValue(MOCK_PIPELINE_RESULT);
@@ -156,6 +210,27 @@ describe('CaptureScreen', () => {
     mockLaunchImageLibrary.mockResolvedValue({
       assets: [{ uri: 'file:///mock/gallery.jpg' }],
     });
+    mockRequestLocationPermission.mockResolvedValue(
+      PermissionsAndroid.RESULTS.GRANTED,
+    );
+    mockGetCurrentPosition.mockImplementation(
+      (
+        success: (position: GeolocationResponse) => void,
+      ) => {
+        success({
+          coords: {
+            latitude: MOCK_GPS.lat,
+            longitude: MOCK_GPS.lon,
+            accuracy: MOCK_GPS.accuracy,
+            altitude: null,
+            heading: null,
+            speed: null,
+            altitudeAccuracy: null,
+          },
+          timestamp: 0,
+        });
+      },
+    );
   });
 
   // ==========================================================================
@@ -201,6 +276,7 @@ describe('CaptureScreen', () => {
       expect(mockLaunchImageLibrary).toHaveBeenCalledWith({
         mediaType: 'photo',
         quality: 1,
+        selectionLimit: 0,
       });
     });
   });
@@ -267,7 +343,7 @@ describe('CaptureScreen', () => {
     });
   });
 
-  it('saves GPS as null (stub) in observation', async () => {
+  it('queues the new observation for sync so it is not silently unreachable from the Sync screen', async () => {
     const { getByTestId } = render(<CaptureScreen />);
     fireEvent.press(getByTestId('take-photo-button'));
 
@@ -275,8 +351,91 @@ describe('CaptureScreen', () => {
       expect(mockNavigate).toHaveBeenCalled();
     });
 
-    // GPS saved in observation (pipeline no longer receives GPS)
+    const queueItem = useWildlifeStore
+      .getState()
+      .syncQueue.find(item => item.observationId === 'obs-123');
+    expect(queueItem).toMatchObject({
+      observationId: 'obs-123',
+      status: 'pending',
+      retryCount: 0,
+    });
+  });
+
+  it('saves GPS coordinates in observation when location permission is granted', async () => {
+    const { getByTestId } = render(<CaptureScreen />);
+    fireEvent.press(getByTestId('take-photo-button'));
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalled();
+    });
+
     const observations = useWildlifeStore.getState().observations;
+    expect(observations[0].gps).toEqual(MOCK_GPS);
+    expect(mockRequestLocationPermission).toHaveBeenCalledWith(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      expect.objectContaining({
+        title: 'Location permission',
+      }),
+    );
+    expect(mockGetCurrentPosition).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({
+        enableHighAccuracy: true,
+        timeout: 10000,
+      }),
+    );
+  });
+
+  it('saves GPS as null when location permission is denied and still completes capture', async () => {
+    mockRequestLocationPermission.mockResolvedValue(
+      PermissionsAndroid.RESULTS.DENIED,
+    );
+
+    const { getByTestId } = render(<CaptureScreen />);
+    fireEvent.press(getByTestId('take-photo-button'));
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(
+        'DetectionResults',
+        { observationId: 'obs-123' },
+      );
+    });
+
+    const observations = useWildlifeStore.getState().observations;
+    expect(observations).toHaveLength(1);
+    expect(observations[0].gps).toBeNull();
+    expect(mockGetCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it('saves GPS as null when geolocation lookup fails and still completes capture', async () => {
+    mockGetCurrentPosition.mockImplementation(
+      (
+        _success: (position: GeolocationResponse) => void,
+        error?: (error: GeolocationError) => void,
+      ) => {
+        error?.({
+          code: 3,
+          message: 'Location timeout',
+          PERMISSION_DENIED: 1,
+          POSITION_UNAVAILABLE: 2,
+          TIMEOUT: 3,
+        });
+      },
+    );
+
+    const { getByTestId } = render(<CaptureScreen />);
+    fireEvent.press(getByTestId('take-photo-button'));
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(
+        'DetectionResults',
+        { observationId: 'obs-123' },
+      );
+    });
+
+    const observations = useWildlifeStore.getState().observations;
+    expect(observations).toHaveLength(1);
     expect(observations[0].gps).toBeNull();
   });
 
@@ -309,6 +468,7 @@ describe('CaptureScreen', () => {
         sizeBytes: 1000,
         status: 'corrupt',
         verifiedAt: null,
+        format: 'onnx',
       },
     });
 
@@ -392,6 +552,13 @@ describe('CaptureScreen', () => {
   });
 
   it("passes the pack's embedding input config through to the pipeline", async () => {
+    for (const filepath of ['/packs/horse', '/packs/horse/manifest.json', '/packs/horse', '/packs/horse/config/detector.json']) {
+      (RNFS.stat as jest.Mock).mockResolvedValueOnce({
+        canonicalPath: filepath,
+        isFile: () => filepath.endsWith('.json'),
+        isDirectory: () => filepath === '/packs/horse',
+      });
+    }
     const { packManager } = require('../../../src/services/packManager');
     (packManager.loadManifest as jest.Mock).mockResolvedValue({
       embeddingModel: {
@@ -435,6 +602,25 @@ describe('CaptureScreen', () => {
     const call = (wildlifePipeline.processPhoto as jest.Mock).mock.calls[0][0];
     expect(call.speciesConfigs).toHaveLength(1);
     expect(call.speciesConfigs[0].packId).toBe('pack-compatible');
+  });
+
+  it('blocks identification when every pack has a different model version', async () => {
+    useWildlifeStore.setState({
+      packs: [
+        makeTestPack({ embeddingModelVersion: '4.1.1' }),
+      ],
+    });
+
+    const { getByTestId } = render(<CaptureScreen />);
+    fireEvent.press(getByTestId('take-photo-button'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Model and pack versions do not match',
+        expect.stringContaining('4.1.0'),
+      );
+    });
+    expect(wildlifePipeline.processPhoto).not.toHaveBeenCalled();
   });
 
   // ==========================================================================
@@ -487,6 +673,33 @@ describe('CaptureScreen', () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
+  it('deletes the just-persisted files if the SQLite save fails after they were moved', async () => {
+    (wildlifePipeline.processPhoto as jest.Mock).mockResolvedValue({
+      ...MOCK_PIPELINE_RESULT,
+      detections: [MOCK_DETECTION],
+    });
+    (database.insertObservationWithDetections as jest.Mock).mockRejectedValueOnce(
+      new Error('disk full'),
+    );
+    // deleteObservationFiles only unlinks a directory that exists.
+    (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+
+    const { getByTestId } = render(<CaptureScreen />);
+    fireEvent.press(getByTestId('take-photo-button'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('Detection Failed', 'disk full');
+    });
+
+    // The observation must not linger in memory once the durable save failed...
+    expect(useWildlifeStore.getState().observations).toHaveLength(0);
+    // ...and the photo/crop files that were already moved into durable
+    // storage must be cleaned up rather than left as an orphaned directory.
+    expect(RNFS.unlink).toHaveBeenCalledWith(
+      expect.stringContaining('/observations/obs-123'),
+    );
+  });
+
   // ==========================================================================
   // Error Handling
   // ==========================================================================
@@ -520,5 +733,184 @@ describe('CaptureScreen', () => {
     });
 
     expect(mockProcessPhoto).not.toHaveBeenCalled();
+  });
+
+  // ==========================================================================
+  // Batch Import From Gallery
+  // ==========================================================================
+
+  describe('batch import from gallery', () => {
+    it('still processes a single selected gallery photo through the normal single-photo flow', async () => {
+      mockLaunchImageLibrary.mockResolvedValue({
+        assets: [{ uri: 'file:///mock/gallery.jpg' }],
+      });
+
+      const { getByTestId } = render(<CaptureScreen />);
+      fireEvent.press(getByTestId('choose-gallery-button'));
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('DetectionResults', {
+          observationId: 'obs-123',
+        });
+      });
+    });
+
+    it('processes multiple selected photos sequentially and lands on the Observations tab', async () => {
+      mockLaunchImageLibrary.mockResolvedValue({
+        assets: [
+          { uri: 'file:///mock/gallery-1.jpg' },
+          { uri: 'file:///mock/gallery-2.jpg' },
+          { uri: 'file:///mock/gallery-3.jpg' },
+        ],
+      });
+      let callCount = 0;
+      mockProcessPhoto.mockImplementation(() => {
+        callCount += 1;
+        return Promise.resolve({
+          ...MOCK_PIPELINE_RESULT,
+          observationId: `obs-batch-${callCount}`,
+          photoUri: `file:///mock/gallery-${callCount}.jpg`,
+        });
+      });
+
+      const { getByTestId } = render(<CaptureScreen />);
+      fireEvent.press(getByTestId('choose-gallery-button'));
+
+      await waitFor(() => expect(mockProcessPhoto).toHaveBeenCalledTimes(3));
+      await waitFor(() =>
+        expect(mockNavigate).toHaveBeenCalledWith('Main', { screen: 'ObservationsTab' }),
+      );
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Batch import complete',
+        expect.stringContaining('Saved 3 of 3'),
+      );
+      expect(useWildlifeStore.getState().observations).toHaveLength(3);
+    });
+
+    it('shows batch progress while processing multiple photos', async () => {
+      mockLaunchImageLibrary.mockResolvedValue({
+        assets: [
+          { uri: 'file:///mock/gallery-1.jpg' },
+          { uri: 'file:///mock/gallery-2.jpg' },
+        ],
+      });
+      let resolveFirst!: (value: unknown) => void;
+      let callCount = 0;
+      mockProcessPhoto.mockImplementation(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Promise(resolve => {
+            resolveFirst = resolve;
+          });
+        }
+        return Promise.resolve({
+          ...MOCK_PIPELINE_RESULT,
+          observationId: `obs-batch-${callCount}`,
+          photoUri: `file:///mock/gallery-${callCount}.jpg`,
+        });
+      });
+
+      const { getByTestId, getByText } = render(<CaptureScreen />);
+      fireEvent.press(getByTestId('choose-gallery-button'));
+
+      await waitFor(() => expect(getByText('Processing 1 of 2...')).toBeTruthy());
+
+      await act(async () => {
+        resolveFirst({
+          ...MOCK_PIPELINE_RESULT,
+          observationId: 'obs-batch-1',
+          photoUri: 'file:///mock/gallery-1.jpg',
+        });
+      });
+
+      await waitFor(() => expect(mockProcessPhoto).toHaveBeenCalledTimes(2));
+    });
+
+    it('continues past a photo that fails and reports it in the batch summary', async () => {
+      mockLaunchImageLibrary.mockResolvedValue({
+        assets: [
+          { uri: 'file:///mock/gallery-1.jpg' },
+          { uri: 'file:///mock/gallery-2.jpg' },
+        ],
+      });
+      let callCount = 0;
+      mockProcessPhoto.mockImplementation(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return Promise.reject(new Error('disk full'));
+        }
+        return Promise.resolve({
+          ...MOCK_PIPELINE_RESULT,
+          observationId: `obs-batch-${callCount}`,
+          photoUri: `file:///mock/gallery-${callCount}.jpg`,
+        });
+      });
+
+      const { getByTestId } = render(<CaptureScreen />);
+      fireEvent.press(getByTestId('choose-gallery-button'));
+
+      await waitFor(() =>
+        expect(mockNavigate).toHaveBeenCalledWith('Main', { screen: 'ObservationsTab' }),
+      );
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Batch import finished with errors',
+        expect.stringContaining('Photo 1'),
+      );
+      expect(useWildlifeStore.getState().observations).toHaveLength(1);
+    });
+
+    it('warns and waits for confirmation before a batch when storage is low', async () => {
+      mockLaunchImageLibrary.mockResolvedValue({
+        assets: [
+          { uri: 'file:///mock/gallery-1.jpg' },
+          { uri: 'file:///mock/gallery-2.jpg' },
+        ],
+      });
+      (DeviceInfo.getFreeDiskStorage as jest.Mock).mockResolvedValueOnce(100 * 1024 * 1024);
+      (Alert.alert as jest.Mock).mockImplementationOnce(
+        (_title: string, _message: string, buttons?: Array<{ text: string; onPress?: () => void }>) => {
+          buttons?.find(b => b.text === 'Continue')?.onPress?.();
+        },
+      );
+
+      const { getByTestId } = render(<CaptureScreen />);
+      fireEvent.press(getByTestId('choose-gallery-button'));
+
+      await waitFor(() =>
+        expect(Alert.alert).toHaveBeenCalledWith(
+          'Before processing this batch',
+          expect.stringContaining('Storage is low'),
+          expect.any(Array),
+        ),
+      );
+      await waitFor(() => expect(mockProcessPhoto).toHaveBeenCalledTimes(2));
+    });
+
+    it('does not process the batch when the user cancels the low-storage warning', async () => {
+      mockLaunchImageLibrary.mockResolvedValue({
+        assets: [
+          { uri: 'file:///mock/gallery-1.jpg' },
+          { uri: 'file:///mock/gallery-2.jpg' },
+        ],
+      });
+      (DeviceInfo.getFreeDiskStorage as jest.Mock).mockResolvedValueOnce(100 * 1024 * 1024);
+      (Alert.alert as jest.Mock).mockImplementationOnce(
+        (_title: string, _message: string, buttons?: Array<{ text: string; onPress?: () => void }>) => {
+          buttons?.find(b => b.text === 'Cancel')?.onPress?.();
+        },
+      );
+
+      const { getByTestId } = render(<CaptureScreen />);
+      fireEvent.press(getByTestId('choose-gallery-button'));
+
+      await waitFor(() =>
+        expect(Alert.alert).toHaveBeenCalledWith(
+          'Before processing this batch',
+          expect.stringContaining('Storage is low'),
+          expect.any(Array),
+        ),
+      );
+      expect(mockProcessPhoto).not.toHaveBeenCalled();
+    });
   });
 });

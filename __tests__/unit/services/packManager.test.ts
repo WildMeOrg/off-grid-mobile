@@ -51,6 +51,19 @@ describe('PackManager', () => {
   });
 
   describe('loadPackIndex', () => {
+    it.each([
+      [{ id: '../outside', referencePhotos: ['ref.jpg'] }],
+      [{ id: 'individual-001', referencePhotos: ['../../outside.jpg'] }],
+      [{ id: 'individual-001', referencePhotos: ['file:///outside.jpg'] }],
+      [{ id: 'individual-001', referencePhotos: [null] }],
+      [null],
+      null,
+    ])('rejects an unsafe stored index before returning references: %j', async individuals => {
+      (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify({ individuals }));
+      await expect(packManager.loadPackIndex('/mock/pack/embeddings/index.json'))
+        .rejects.toThrow('Pack index contains unsafe individual or reference-photo paths');
+    });
+
     it('should parse index.json and return PackIndividuals', async () => {
       const mockIndex = {
         formatVersion: '1.0',
@@ -220,6 +233,7 @@ describe('PackManager', () => {
 
     const makeStoredPack = (overrides: Record<string, unknown> = {}) => ({
       id: 'pack-1',
+      packVersion: '2026-04-25T00:00:00Z',
       species: 'horse',
       featureClass: 'horse_wild+face',
       displayName: 'Horses',

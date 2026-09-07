@@ -4,21 +4,22 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  Switch,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import DeviceInfo from 'react-native-device-info';
 import { Card } from '../components';
 import { AnimatedEntry } from '../components/AnimatedEntry';
 import { AnimatedListItem } from '../components/AnimatedListItem';
 import { useFocusTrigger } from '../hooks/useFocusTrigger';
 import { useTheme, useThemedStyles } from '../theme';
-import type { ThemeColors, ThemeShadows } from '../theme';
-import { TYPOGRAPHY, SPACING } from '../constants';
-import { useAppStore } from '../stores';
+import { useAppStore, useWildlifeStore } from '../stores';
 import { SettingsStackParamList } from '../navigation/types';
-import packageJson from '../../package.json';
+import { createStyles } from './SettingsScreen.styles';
 
 type NavigationProp = NativeStackNavigationProp<SettingsStackParamList, 'SettingsMain'>;
 
@@ -30,6 +31,10 @@ export const SettingsScreen: React.FC = () => {
   const setOnboardingComplete = useAppStore((s) => s.setOnboardingComplete);
   const themeMode = useAppStore((s) => s.themeMode);
   const setThemeMode = useAppStore((s) => s.setThemeMode);
+  const preferGpuModel = useAppStore((s) => s.preferGpuModel);
+  const setPreferGpuModel = useAppStore((s) => s.setPreferGpuModel);
+  const miewidModel = useWildlifeStore((s) => s.miewidModel);
+  const packs = useWildlifeStore((s) => s.packs);
 
   const handleResetOnboarding = () => {
     setOnboardingComplete(false);
@@ -107,11 +112,54 @@ export const SettingsScreen: React.FC = () => {
         <AnimatedEntry index={2} staggerMs={40} trigger={focusTrigger}>
           <Card style={styles.section}>
             <View style={styles.aboutRow}>
-              <Text style={styles.aboutLabel}>Version</Text>
-              <Text style={styles.aboutValue}>{packageJson.version}</Text>
+              <Text style={styles.aboutLabel}>App version</Text>
+              <Text style={styles.aboutValue}>
+                {DeviceInfo.getVersion()} ({DeviceInfo.getBuildNumber()})
+              </Text>
             </View>
+            <View style={styles.aboutRow}>
+              <Text style={styles.aboutLabel}>MiewID model</Text>
+              <Text style={styles.aboutValue}>
+                {miewidModel?.version ?? 'Not installed'}
+              </Text>
+            </View>
+            {Platform.OS === 'android' && (
+              <View style={styles.gpuToggleRow}>
+                <View style={styles.gpuToggleInfo}>
+                  <Text style={styles.aboutLabel}>GPU acceleration</Text>
+                  <Text style={styles.gpuToggleHint}>
+                    Experimental -- uses the phone's GPU for faster
+                    identification when available, and falls back
+                    automatically when it isn't. Re-download the model
+                    afterward for this to take effect.
+                  </Text>
+                </View>
+                <Switch
+                  value={preferGpuModel}
+                  onValueChange={setPreferGpuModel}
+                  trackColor={{ false: colors.surfaceLight, true: `${colors.primary}80` }}
+                  thumbColor={preferGpuModel ? colors.primary : colors.textMuted}
+                  testID="gpu-acceleration-toggle"
+                />
+              </View>
+            )}
+            {packs.length === 0 ? (
+              <View style={styles.aboutRow}>
+                <Text style={styles.aboutLabel}>Embedding pack</Text>
+                <Text style={styles.aboutValue}>Not installed</Text>
+              </View>
+            ) : (
+              packs.map((pack) => (
+                <View key={pack.id} style={styles.aboutRow}>
+                  <Text style={styles.aboutLabel}>{pack.displayName}</Text>
+                  <Text style={styles.aboutValue}>{pack.packVersion}</Text>
+                </View>
+              ))
+            )}
             <Text style={styles.aboutText}>
-              WildMe brings wildlife re-identification to your device without compromising your privacy.
+              EleBook helps identify elephants in the field using on-device
+              AI, so it works fully offline -- no network connection needed
+              to capture, detect, or match a sighting.
             </Text>
           </Card>
         </AnimatedEntry>
@@ -124,8 +172,10 @@ export const SettingsScreen: React.FC = () => {
             </View>
             <Text style={styles.privacyTitle}>Privacy First</Text>
             <Text style={styles.privacyText}>
-              All your data stays on this device. No photos, observations, or
-              personal information is ever sent to any server without your consent.
+              Photos and observations are captured and matched entirely on
+              this device. They are only uploaded to the Ganesha project
+              backend when you sign in and sync -- nothing is sent
+              automatically or in the background.
             </Text>
           </Card>
         </AnimatedEntry>
@@ -143,168 +193,3 @@ export const SettingsScreen: React.FC = () => {
     </SafeAreaView>
   );
 };
-
-const createStyles = (colors: ThemeColors, shadows: ThemeShadows) => ({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    alignItems: 'center' as const,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    minHeight: 60,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.surface,
-    ...shadows.small,
-    zIndex: 1,
-  },
-  title: {
-    ...TYPOGRAPHY.h2,
-    color: colors.text,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.lg,
-    paddingBottom: SPACING.xxl,
-  },
-  themeToggleRow: {
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    alignItems: 'center' as const,
-    backgroundColor: colors.surface,
-    borderRadius: 8,
-    padding: SPACING.md,
-    marginBottom: SPACING.lg,
-    ...shadows.small,
-  },
-  themeToggleLabel: {
-    ...TYPOGRAPHY.body,
-    color: colors.text,
-  },
-  themeSelector: {
-    flexDirection: 'row' as const,
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 8,
-    padding: 3,
-    gap: 2,
-  },
-  themeSelectorOption: {
-    width: 34,
-    height: 30,
-    borderRadius: 6,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-  },
-  themeSelectorOptionActive: {
-    backgroundColor: colors.primary,
-  },
-  navSection: {
-    backgroundColor: colors.surface,
-    borderRadius: 8,
-    marginBottom: SPACING.lg,
-    overflow: 'hidden' as const,
-    ...shadows.small,
-  },
-  navItem: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    padding: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  navItemLast: {
-    borderBottomWidth: 0,
-  },
-  navItemIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    backgroundColor: 'transparent',
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    marginRight: SPACING.md,
-  },
-  navItemContent: {
-    flex: 1,
-  },
-  navItemTitle: {
-    ...TYPOGRAPHY.body,
-    fontWeight: '400' as const,
-    color: colors.text,
-  },
-  navItemDesc: {
-    ...TYPOGRAPHY.bodySmall,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  section: {
-    marginBottom: SPACING.lg,
-  },
-  aboutRow: {
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    alignItems: 'center' as const,
-    marginBottom: SPACING.sm,
-  },
-  aboutLabel: {
-    ...TYPOGRAPHY.body,
-    color: colors.textSecondary,
-  },
-  aboutValue: {
-    ...TYPOGRAPHY.body,
-    fontWeight: '400' as const,
-    color: colors.text,
-  },
-  aboutText: {
-    ...TYPOGRAPHY.bodySmall,
-    color: colors.textMuted,
-    lineHeight: 18,
-  },
-  privacyCard: {
-    alignItems: 'center' as const,
-    backgroundColor: colors.surface,
-  },
-  privacyIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'transparent',
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    marginBottom: SPACING.md,
-  },
-  privacyTitle: {
-    ...TYPOGRAPHY.h3,
-    color: colors.text,
-    marginBottom: SPACING.sm,
-  },
-  privacyText: {
-    ...TYPOGRAPHY.body,
-    color: colors.textSecondary,
-    textAlign: 'center' as const,
-    lineHeight: 20,
-  },
-  devButton: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    gap: SPACING.sm,
-    paddingVertical: SPACING.md,
-    marginTop: SPACING.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed' as const,
-    borderRadius: 6,
-  },
-  devButtonText: {
-    ...TYPOGRAPHY.bodySmall,
-    color: colors.textMuted,
-  },
-});

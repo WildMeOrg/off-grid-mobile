@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, Image, TouchableOpacity, FlatList } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Feather';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -9,8 +9,11 @@ import { useThemedStyles, useTheme } from '../../theme';
 import { useWildlifeStore } from '../../stores';
 import type { RootStackParamList } from '../../navigation/types';
 import type { MatchCandidate } from '../../types';
+import { toDisplayUri } from '../../utils/imageUri';
+import { SPACING } from '../../constants';
 import { CandidateCard } from './CandidateCard';
 import { createStyles } from './styles';
+import { usePackIndividualInfo } from './usePackIndividualInfo';
 
 type NavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -28,32 +31,35 @@ interface ResolvedCandidate {
 export const MatchReviewScreen: React.FC = () => {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<MatchReviewRouteProp>();
   const { observationId, detectionId } = route.params;
 
-  const observation = useWildlifeStore((s) =>
-    s.observations.find((o) => o.id === observationId),
+  const observation = useWildlifeStore(s =>
+    s.observations.find(o => o.id === observationId),
   );
-  const localIndividuals = useWildlifeStore((s) => s.localIndividuals);
-  const updateDetection = useWildlifeStore((s) => s.updateDetection);
-  const addLocalIndividual = useWildlifeStore((s) => s.addLocalIndividual);
+  const localIndividuals = useWildlifeStore(s => s.localIndividuals);
+  const packs = useWildlifeStore(s => s.packs);
+  const updateDetection = useWildlifeStore(s => s.updateDetection);
+  const addLocalIndividual = useWildlifeStore(s => s.addLocalIndividual);
   const addEmbeddingToLocalIndividual = useWildlifeStore(
-    (s) => s.addEmbeddingToLocalIndividual,
+    s => s.addEmbeddingToLocalIndividual,
   );
 
   const detection = useMemo(
-    () => observation?.detections.find((d) => d.id === detectionId) ?? null,
+    () => observation?.detections.find(d => d.id === detectionId) ?? null,
     [observation, detectionId],
   );
 
   const candidates = detection?.matchResult.topCandidates ?? [];
+  const packIndividualInfo = usePackIndividualInfo(candidates, packs);
 
   const resolvedCandidates: ResolvedCandidate[] = useMemo(() => {
-    return candidates.map((candidate) => {
+    return candidates.map(candidate => {
       if (candidate.source === 'local') {
         const local = localIndividuals.find(
-          (ind) => ind.localId === candidate.individualId,
+          ind => ind.localId === candidate.individualId,
         );
         return {
           candidate,
@@ -64,16 +70,18 @@ export const MatchReviewScreen: React.FC = () => {
         };
       }
 
-      // Pack individual -- name resolution requires async file reads,
-      // so we display the ID for now. Task 5.2 will wire full resolution.
+      // Pack individual -- name and reference photo are resolved
+      // asynchronously above from the pack's embeddings/index.json; fall
+      // back to the raw ID until that resolves.
+      const info = packIndividualInfo[candidate.individualId];
       return {
         candidate,
-        name: candidate.individualId,
+        name: info?.name ?? candidate.individualId,
         displayId: candidate.individualId,
-        refPhotoUri: null,
+        refPhotoUri: info?.refPhotoUri ?? null,
       };
     });
-  }, [candidates, localIndividuals]);
+  }, [candidates, localIndividuals, packIndividualInfo]);
 
   const handleBack = useCallback(() => {
     navigation.goBack();
@@ -82,7 +90,7 @@ export const MatchReviewScreen: React.FC = () => {
   const handleApprove = useCallback(
     (individualId: string) => {
       const approvedCandidate = candidates.find(
-        (c) => c.individualId === individualId,
+        c => c.individualId === individualId,
       );
       if (approvedCandidate?.source === 'local' && detection) {
         addEmbeddingToLocalIndividual(
@@ -153,9 +161,10 @@ export const MatchReviewScreen: React.FC = () => {
   }, [navigation]);
 
   const renderCandidate = useCallback(
-    ({ item }: { item: ResolvedCandidate }) => (
+    ({ item, index }: { item: ResolvedCandidate; index: number }) => (
       <CandidateCard
         candidate={item.candidate}
+        rank={index + 1}
         name={item.name}
         displayId={item.displayId}
         refPhotoUri={item.refPhotoUri}
@@ -194,8 +203,6 @@ export const MatchReviewScreen: React.FC = () => {
     );
   }
 
-  const confidencePercent = `${Math.round(detection.speciesConfidence * 100)}%`;
-
   return (
     <SafeAreaView
       style={styles.container}
@@ -216,14 +223,13 @@ export const MatchReviewScreen: React.FC = () => {
 
       <View style={styles.detectionSection}>
         <Image
-          source={{ uri: detection.croppedImageUri }}
+          source={{ uri: toDisplayUri(detection.croppedImageUri) }}
           style={styles.croppedImage}
           resizeMode="cover"
           testID="cropped-detection-image"
         />
         <View style={styles.speciesRow}>
           <Text style={styles.speciesText}>{detection.species}</Text>
-          <Text style={styles.confidenceText}>{confidencePercent}</Text>
         </View>
       </View>
 
@@ -243,7 +249,7 @@ export const MatchReviewScreen: React.FC = () => {
         }
       />
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: SPACING.md + insets.bottom }]} testID="match-review-footer">
         <TouchableOpacity
           style={styles.newIndividualButton}
           onPress={handleNoMatch}

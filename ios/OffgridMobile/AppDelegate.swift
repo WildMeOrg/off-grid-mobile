@@ -4,11 +4,27 @@ import React_RCTAppDelegate
 import ReactAppDependencyProvider
 
 @main
-class AppDelegate: UIResponder, UIApplicationDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, RNAppAuthAuthorizationFlowManager {
   var window: UIWindow?
 
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
+
+  // Required by RNAppAuthAuthorizationFlowManager: react-native-app-auth sets this
+  // when a sign-in flow starts, and expects application(_:open:options:) to hand the
+  // OAuth redirect URL back to it (Android gets the equivalent via a manifest intent-filter).
+  weak var authorizationFlowManagerDelegate: RNAppAuthAuthorizationFlowManagerDelegate?
+
+  func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    if let authorizationFlowManagerDelegate = self.authorizationFlowManagerDelegate {
+      return authorizationFlowManagerDelegate.resumeExternalUserAgentFlow(with: url)
+    }
+    return false
+  }
 
   func application(
     _ application: UIApplication,

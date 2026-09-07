@@ -1,12 +1,16 @@
 import RNFS from 'react-native-fs';
 import type { EmbeddingPackManifest, PackIndividual } from '../../types';
 import type { PackIndexFile } from './types';
+import { containedPackFile, hasSafeIndividualPhotoPaths, resolvePackFile, unsafeManifestPaths } from './paths';
+
+export { resolvePackFile } from './paths';
 
 export type PackValidationErrorCode =
   | 'manifest-missing'
   | 'manifest-unparseable'
   | 'manifest-schema'
   | 'unsupported-format-version'
+  | 'unsafe-path'
   | 'file-missing'
   | 'checksum-mismatch'
   | 'embeddings-size-mismatch'
@@ -45,7 +49,7 @@ const isCount = (value: unknown): boolean =>
 const isNumberTuple = (value: unknown, length: number): boolean =>
   Array.isArray(value) &&
   value.length === length &&
-  value.every((v) => typeof v === 'number');
+  value.every(v => typeof v === 'number');
 
 const getPath = (obj: unknown, path: string[]): unknown =>
   path.reduce<unknown>(
@@ -73,21 +77,21 @@ const MANIFEST_SCHEMA_CHECKS: Array<{
   { path: ['embeddingCount'], check: isCount },
   {
     path: ['embeddingDim'],
-    check: (v) => typeof v === 'number' && v > 0,
+    check: v => typeof v === 'number' && v > 0,
   },
   { path: ['embeddingModel', 'name'], check: isNonEmptyString },
   { path: ['embeddingModel', 'version'], check: isNonEmptyString },
   {
     path: ['embeddingModel', 'inputSize'],
-    check: (v) => isNumberTuple(v, 2),
+    check: v => isNumberTuple(v, 2),
   },
   {
     path: ['embeddingModel', 'normalize', 'mean'],
-    check: (v) => isNumberTuple(v, 3),
+    check: v => isNumberTuple(v, 3),
   },
   {
     path: ['embeddingModel', 'normalize', 'std'],
-    check: (v) => isNumberTuple(v, 3),
+    check: v => isNumberTuple(v, 3),
   },
   { path: ['detectorModel', 'filename'], check: isNonEmptyString },
   { path: ['detectorModel', 'configFile'], check: isNonEmptyString },
@@ -97,32 +101,6 @@ function findManifestSchemaErrors(manifest: unknown): string[] {
   return MANIFEST_SCHEMA_CHECKS.filter(
     ({ path, check }) => !check(getPath(manifest, path)),
   ).map(({ path }) => `missing or invalid '${path.join('.')}'`);
-}
-
-/**
- * Resolve a manifest-relative file reference to an absolute path inside the
- * pack. `manifest.checksums` keys and `detectorModel.filename` are bare
- * filenames whose location follows the pack layout convention
- * (embeddings/, models/, config/); explicit relative paths pass through.
- */
-async function resolvePackFile(
-  packDir: string,
-  name: string,
-): Promise<string | null> {
-  const candidates = name.includes('/')
-    ? [`${packDir}/${name}`]
-    : [
-        `${packDir}/${name}`,
-        `${packDir}/embeddings/${name}`,
-        `${packDir}/models/${name}`,
-        `${packDir}/config/${name}`,
-      ];
-  for (const candidate of candidates) {
-    if (await RNFS.exists(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
 }
 
 /** Accumulates errors, deduplicating file-missing reports by filename. */
@@ -152,10 +130,14 @@ async function loadManifestChecked(
   if (!(await RNFS.exists(manifestPath))) {
     return { errors: [{ code: 'manifest-missing', detail: manifestPath }] };
   }
+  const containedManifest = await containedPackFile(packDir, 'manifest.json');
+  if (!containedManifest) {
+    return { errors: [{ code: 'unsafe-path', detail: 'Manifest must resolve inside the pack directory' }] };
+  }
 
   let manifest: EmbeddingPackManifest;
   try {
-    manifest = JSON.parse(await RNFS.readFile(manifestPath, 'utf8'));
+    manifest = JSON.parse(await RNFS.readFile(containedManifest, 'utf8'));
   } catch (error) {
     return {
       errors: [
@@ -170,11 +152,15 @@ async function loadManifestChecked(
   const schemaErrors = findManifestSchemaErrors(manifest);
   if (schemaErrors.length > 0) {
     return {
-      errors: schemaErrors.map((detail) => ({
+      errors: schemaErrors.map(detail => ({
         code: 'manifest-schema' as const,
         detail,
       })),
     };
+  }
+  const unsafePaths = unsafeManifestPaths(manifest);
+  if (unsafePaths.length > 0) {
+    return { errors: unsafePaths.map(detail => ({ code: 'unsafe-path', detail })) };
   }
   return { manifest };
 }
@@ -251,11 +237,18 @@ async function checkIndex(
   }
 
   if (!Array.isArray(parsed.individuals)) {
-    collector.push('index-unparseable', "index.json has no 'individuals' array");
+    collector.push(
+      'index-unparseable',
+      "index.json has no 'individuals' array",
+    );
     return [];
   }
 
   for (const individual of parsed.individuals) {
+    if (!hasSafeIndividualPhotoPaths(individual)) {
+      collector.push('unsafe-path', 'Invalid individual ID or reference-photo path');
+      continue;
+    }
     if (!isIndividualRangeValid(individual, manifest.embeddingCount)) {
       collector.push(
         'index-out-of-bounds',
@@ -286,7 +279,9 @@ export async function validatePack(
   if (!SUPPORTED_FORMAT_MAJOR_VERSIONS.includes(formatMajor)) {
     collector.push(
       'unsupported-format-version',
-      `formatVersion ${manifest.formatVersion} (supported majors: ${SUPPORTED_FORMAT_MAJOR_VERSIONS.join(', ')})`,
+      `formatVersion ${
+        manifest.formatVersion
+      } (supported majors: ${SUPPORTED_FORMAT_MAJOR_VERSIONS.join(', ')})`,
     );
   }
 

@@ -12,6 +12,7 @@
 
 import { wildlifePipeline } from '../../../src/services/wildlifePipeline';
 import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
+import { initDatabase } from '../../../src/services/database';
 import type { ProcessPhotoParams } from '../../../src/services/wildlifePipeline/types';
 import type { EmbeddingDatabaseEntry } from '../../../src/services/embeddingMatchService/types';
 import type { Observation, LocalIndividual } from '../../../src/types';
@@ -154,6 +155,10 @@ function programOnnxForDetection(embedding: number[]): void {
 // ---------------------------------------------------------------------------
 
 describe('Wildlife Pipeline — Full Integration Flow', () => {
+  beforeAll(async () => {
+    await initDatabase();
+  });
+
   beforeEach(() => {
     mockIdCounter = 0;
     jest.clearAllMocks();

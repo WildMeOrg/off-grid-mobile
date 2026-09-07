@@ -11,7 +11,7 @@ if [ -n "$STAGED_JS" ]; then
   npx lint-staged
 
   echo "▶ TypeScript type check..."
-  npx tsc --noEmit
+  npm run typecheck
 
   echo "▶ JS/TS tests..."
   npx jest --coverage --forceExit --maxWorkers=50%
@@ -38,10 +38,10 @@ fi
 # ── Kotlin / Android ───────────────────────────────────────────────────────────
 if [ -n "$STAGED_KOTLIN" ]; then
   echo "▶ Kotlin type check (compileDebugKotlin)..."
-  (cd android && ./gradlew :app:compileDebugKotlin --quiet)
+  node scripts/run-gradle.js compile
 
   echo "▶ Android lint..."
-  (cd android && ./gradlew :app:lintDebug --quiet)
+  npm run lint:android
 
   echo "▶ Android tests..."
   npm run test:android

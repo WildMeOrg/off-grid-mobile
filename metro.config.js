@@ -1,4 +1,7 @@
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const { configureApp } = require('./scripts/configure-app');
+
+configureApp();
 
 /**
  * Metro configuration

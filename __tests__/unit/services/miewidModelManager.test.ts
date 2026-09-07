@@ -2,6 +2,7 @@ import {
   reconcileMiewidModel,
   checkEmbeddingModelCompatibility,
   acquireMiewidModel,
+  prepareMiewidModel,
 } from '../../../src/services/miewidModelManager';
 import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
 import type { MiewIDModelRecord } from '../../../src/types';
@@ -37,6 +38,7 @@ const makeRecord = (
   sizeBytes: 103_859_027,
   status: 'ready',
   verifiedAt: '2026-08-01T00:00:00.000Z',
+  format: 'onnx',
   ...overrides,
 });
 
@@ -166,6 +168,7 @@ describe('acquireMiewidModel', () => {
     url: 'https://example.org/miewid.onnx',
     expectedSha256: 'abc123',
     expectedSizeBytes: 1000,
+    format: 'onnx' as const,
   };
 
   beforeEach(() => {
@@ -243,18 +246,67 @@ describe('acquireMiewidModel', () => {
   });
 });
 
+describe('prepareMiewidModel', () => {
+  const SOURCE = {
+    name: 'miewid',
+    version: '4.2.0',
+    url: 'https://example.org/miewid-4.2.onnx',
+    expectedSha256: 'def456',
+    expectedSizeBytes: 2000,
+    format: 'onnx' as const,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useWildlifeStore.setState({ miewidModel: makeRecord() });
+  });
+
+  it('returns a verified candidate without replacing the active model', async () => {
+    const active = useWildlifeStore.getState().miewidModel;
+    mockDownloadModel.mockResolvedValue({
+      ok: true,
+      path: '/mock/documents/models/miewid-4.2.0.onnx',
+      sha256: 'def456',
+      sizeBytes: 2000,
+    });
+
+    const candidate = await prepareMiewidModel(SOURCE);
+
+    expect(candidate).toMatchObject({
+      version: '4.2.0',
+      status: 'ready',
+      path: '/mock/documents/models/miewid-4.2.0.onnx',
+    });
+    expect(useWildlifeStore.getState().miewidModel).toEqual(active);
+  });
+
+  it('returns a failed candidate without replacing the active model', async () => {
+    const active = useWildlifeStore.getState().miewidModel;
+    mockDownloadModel.mockResolvedValue({
+      ok: false,
+      code: 'checksum-mismatch',
+      message: 'hash differs',
+    });
+
+    const candidate = await prepareMiewidModel(SOURCE);
+
+    expect(candidate.status).toBe('corrupt');
+    expect(useWildlifeStore.getState().miewidModel).toEqual(active);
+  });
+});
+
 describe('checkEmbeddingModelCompatibility', () => {
   it.each([
     ['4.1.0', '4.1.0', 'compatible'],
-    ['4.1.0', '4.1.3', 'compatible'],
     ['v4.1', '4.1.0', 'compatible'],
-    ['4.1.0', '4.2.0', 'minor-mismatch'],
-    ['4.2.0', '4.1.0', 'minor-mismatch'],
+    ['4.1.0', '4.1.3', 'incompatible'],
+    ['4.1.0', '4.2.0', 'incompatible'],
+    ['4.2.0', '4.1.0', 'incompatible'],
     ['4.1.0', '5.0.0', 'incompatible'],
     ['5.0.0', '4.1.0', 'incompatible'],
-    ['unknown', '4.1.0', 'minor-mismatch'],
-    ['4.1.0', 'garbage', 'minor-mismatch'],
-    ['', '4.1.0', 'minor-mismatch'],
+    ['unknown', '4.1.0', 'incompatible'],
+    ['4.1.0', 'garbage', 'incompatible'],
+    ['', '4.1.0', 'incompatible'],
   ])('(%s, %s) → %s', (modelVersion, packVersion, expected) => {
     expect(checkEmbeddingModelCompatibility(modelVersion, packVersion)).toBe(
       expected,

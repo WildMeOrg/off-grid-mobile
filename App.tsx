@@ -17,8 +17,10 @@ import {
   packManager,
   reconcileMiewidModel,
 } from './src/services';
+import { runGoldenBatchIfRequested } from './src/services/goldenBatchEvaluator';
+import { initDatabase } from './src/services/database';
 import logger from './src/utils/logger';
-import { useAppStore, useAuthStore, useWildlifeStore } from './src/stores';
+import { useAppStore, useAuthStore, useWildlifeStore, hydrateObservationsFromDb } from './src/stores';
 import { LockScreen } from './src/screens';
 import { useAppState } from './src/hooks/useAppState';
 import { LogBox } from 'react-native';
@@ -91,6 +93,17 @@ function App() {
       await ensureAppStoreHydrated();
       await ensureWildlifeStoreHydrated();
 
+      // Open (and migrate, if needed) the local SQLite database, then load
+      // observations/sync queue into the store -- must happen before any
+      // screen that reads useWildlifeStore().observations renders.
+      try {
+        await initDatabase();
+        await hydrateObservationsFromDb();
+        logger.log('[App] Database initialized and observations hydrated');
+      } catch (err) {
+        logger.error('[App] Failed to initialize database:', err);
+      }
+
       // Initialize pack manager (creates packs directory if needed)
       try {
         await packManager.initialize();
@@ -143,6 +156,18 @@ function App() {
 
       // Show the UI
       setIsInitializing(false);
+
+      // DEBUG-ONLY, no-UI golden batch evaluator: runs the production
+      // wildlifePipeline against a manifest of staged reference images when
+      // (and only when) an orchestration script has dropped a one-shot
+      // request at batch/request.json. Explicitly gated on `__DEV__` here in
+      // addition to the evaluator's own internal guard -- a release build
+      // must never execute this path. Fired after the UI is already shown
+      // (not awaited) so a long-running batch never delays app startup;
+      // any failure is caught internally and logged, never thrown.
+      if (__DEV__) {
+        runGoldenBatchIfRequested();
+      }
     } catch (error) {
       logger.error('[App] Error initializing app:', error);
       setIsInitializing(false);

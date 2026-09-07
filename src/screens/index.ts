@@ -3,6 +3,8 @@ export { SettingsScreen } from './SettingsScreen';
 export { LockScreen } from './LockScreen';
 export { PassphraseSetupScreen } from './PassphraseSetupScreen';
 export { SecuritySettingsScreen } from './SecuritySettingsScreen';
+export { SignInScreen } from './SignInScreen';
+export { SelectRoleScreen } from './SelectRoleScreen';
 
 // Wildlife screens
 export { WildlifeHomeScreen } from './WildlifeHomeScreen';

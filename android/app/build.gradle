@@ -60,6 +60,35 @@ react {
  */
 def enableProguardInReleaseBuilds = false
 
+def releaseSigningProperties = [
+    'ELEBOOK_RELEASE_STORE_FILE',
+    'ELEBOOK_RELEASE_STORE_PASSWORD',
+    'ELEBOOK_RELEASE_KEY_ALIAS',
+    'ELEBOOK_RELEASE_KEY_PASSWORD',
+]
+def missingReleaseSigningProperties = releaseSigningProperties.findAll {
+    !project.hasProperty(it) || project.property(it).toString().trim().isEmpty()
+}
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains('release')
+}
+
+if (releaseTaskRequested && !missingReleaseSigningProperties.isEmpty()) {
+    throw new GradleException(
+        "Release signing is required. Missing Gradle properties: " +
+        missingReleaseSigningProperties.join(', ')
+    )
+}
+
+if (releaseTaskRequested) {
+    def releaseStoreFile = file(project.property('ELEBOOK_RELEASE_STORE_FILE'))
+    if (!releaseStoreFile.exists()) {
+        throw new GradleException(
+            "Release keystore does not exist: ${releaseStoreFile.absolutePath}"
+        )
+    }
+}
+
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
  *
@@ -78,13 +107,23 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "ai.offgridmobile"
+    namespace "org.ganesha.elebook"
     defaultConfig {
-        applicationId "ai.offgridmobile"
+        applicationId "org.ganesha.elebook"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1771958439
-        versionName "0.0.58"
+        versionCode 1787551543
+        versionName "0.1.0-field.2"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // Consumed by react-native-app-auth's bundled RedirectUriReceiverActivity
+        // to catch the org.ganesha.elebook://oauthredirect callback from the
+        // system browser after Entra sign-in. Registered as a public client
+        // redirect URI on the ganesha-mobile-android Entra app registration.
+        // Not package-suffix-specific (scheme matching, not application id),
+        // so this one value covers both the debug (.dev) and release builds.
+        manifestPlaceholders = [
+            appAuthRedirectScheme: "org.ganesha.elebook"
+        ]
     }
     signingConfigs {
         debug {
@@ -94,11 +133,11 @@ android {
             keyPassword 'android'
         }
         release {
-            if (project.hasProperty('OFFGRID_UPLOAD_STORE_FILE')) {
-                storeFile file(OFFGRID_UPLOAD_STORE_FILE)
-                storePassword OFFGRID_UPLOAD_STORE_PASSWORD
-                keyAlias OFFGRID_UPLOAD_KEY_ALIAS
-                keyPassword OFFGRID_UPLOAD_KEY_PASSWORD
+            if (missingReleaseSigningProperties.isEmpty()) {
+                storeFile file(ELEBOOK_RELEASE_STORE_FILE)
+                storePassword ELEBOOK_RELEASE_STORE_PASSWORD
+                keyAlias ELEBOOK_RELEASE_KEY_ALIAS
+                keyPassword ELEBOOK_RELEASE_KEY_PASSWORD
             }
         }
     }
@@ -116,7 +155,9 @@ android {
             applicationIdSuffix ".dev"
         }
         release {
-            signingConfig signingConfigs.release.storeFile ? signingConfigs.release : signingConfigs.debug
+            if (missingReleaseSigningProperties.isEmpty()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
@@ -136,21 +177,28 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // org.tensorflow:tensorflow-lite was Maven-relocated to LiteRT; the
+    // org.tensorflow.lite.* Interpreter API is unchanged (drop-in rename).
+    // Pinned to the 1.4.x line (not the latest 2.2.0) — litert-gpu has no
+    // 2.x release yet, and litert-api 2.2.0's Kotlin metadata (2.3.0) is
+    // newer than this project's pinned Kotlin compiler (2.1.20, android/build.gradle).
+    implementation("com.google.ai.edge.litert:litert:1.4.2")
+    implementation("com.google.ai.edge.litert:litert-gpu:1.4.2")
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
     }
 
-    // Coroutines for async operations (used by LocalDreamModule)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-
-    // PDF text extraction (used by PDFExtractorModule)
-    implementation("io.legere:pdfiumandroid:1.0.35")
-
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("org.mockito:mockito-core:5.11.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
     testImplementation("androidx.test:core:1.6.1")
+
+    // Instrumented (on-device) tests — Ganesha golden MiewID parity check (E13-4)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.2")
 }
