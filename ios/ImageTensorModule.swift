@@ -12,6 +12,7 @@ class ImageTensorModule: NSObject {
   // MARK: - imageToTensor
 
   @objc
+  // swiftlint:disable:next function_parameter_count
   func imageToTensor(
     _ uri: String,
     width: Double,
@@ -58,10 +59,11 @@ class ImageTensorModule: NSObject {
   // MARK: - cropImage
 
   @objc
+  // swiftlint:disable:next function_parameter_count
   func cropImage(
     _ uri: String,
-    x: Double,
-    y: Double,
+    x cropX: Double,
+    y cropY: Double,
     width: Double,
     height: Double,
     outputPath: String,
@@ -77,12 +79,12 @@ class ImageTensorModule: NSObject {
       let imgW = Double(cgImage.width)
       let imgH = Double(cgImage.height)
 
-      let px = max(0, min(x * imgW, imgW - 1))
-      let py = max(0, min(y * imgH, imgH - 1))
-      let pw = max(1, min(width * imgW, imgW - px))
-      let ph = max(1, min(height * imgH, imgH - py))
+      let pixelX = max(0, min(cropX * imgW, imgW - 1))
+      let pixelY = max(0, min(cropY * imgH, imgH - 1))
+      let pixelWidth = max(1, min(width * imgW, imgW - pixelX))
+      let pixelHeight = max(1, min(height * imgH, imgH - pixelY))
 
-      let cropRect = CGRect(x: px, y: py, width: pw, height: ph)
+      let cropRect = CGRect(x: pixelX, y: pixelY, width: pixelWidth, height: pixelHeight)
 
       guard let cropped = cgImage.cropping(to: cropRect) else {
         reject("IMAGE_ERROR", "Failed to crop image", nil)
@@ -142,24 +144,24 @@ class ImageTensorModule: NSObject {
 
   static func extractNchw(
     from cgImage: CGImage,
-    width w: Int,
-    height h: Int,
+    width imageWidth: Int,
+    height imageHeight: Int,
     mean: [Double],
     std: [Double],
     scale: Double,
     bgr: Bool
   ) -> [Double]? {
     let bytesPerPixel = 4
-    let bytesPerRow = bytesPerPixel * w
+    let bytesPerRow = bytesPerPixel * imageWidth
     let bitsPerComponent = 8
 
-    var pixelData = [UInt8](repeating: 0, count: h * bytesPerRow)
+    var pixelData = [UInt8](repeating: 0, count: imageHeight * bytesPerRow)
 
     guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
           let context = CGContext(
             data: &pixelData,
-            width: w,
-            height: h,
+            width: imageWidth,
+            height: imageHeight,
             bitsPerComponent: bitsPerComponent,
             bytesPerRow: bytesPerRow,
             space: colorSpace,
@@ -168,28 +170,28 @@ class ImageTensorModule: NSObject {
       return nil
     }
 
-    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight))
 
     // RGBA byte layout → NCHW double array
-    var output = [Double](repeating: 0.0, count: 3 * h * w)
+    var output = [Double](repeating: 0.0, count: 3 * imageHeight * imageWidth)
 
     let rIdx = bgr ? 2 : 0
     let gIdx = 1
     let bIdx = bgr ? 0 : 2
 
-    for row in 0..<h {
-      for col in 0..<w {
+    for row in 0..<imageHeight {
+      for col in 0..<imageWidth {
         let pixelOffset = row * bytesPerRow + col * bytesPerPixel
-        let r = Double(pixelData[pixelOffset])
-        let g = Double(pixelData[pixelOffset + 1])
-        let b = Double(pixelData[pixelOffset + 2])
+        let red = Double(pixelData[pixelOffset])
+        let green = Double(pixelData[pixelOffset + 1])
+        let blue = Double(pixelData[pixelOffset + 2])
 
-        let i = row * w + col
+        let pixelIndex = row * imageWidth + col
         // `scale` is a multiplier per docs/EMBEDDING_PACK_FORMAT.md (e.g. 1/255 to move
         // uint8 [0,255] into float [0,1] before mean/std normalization).
-        output[rIdx * h * w + i] = (r * scale - mean[0]) / std[0]
-        output[gIdx * h * w + i] = (g * scale - mean[1]) / std[1]
-        output[bIdx * h * w + i] = (b * scale - mean[2]) / std[2]
+        output[rIdx * imageHeight * imageWidth + pixelIndex] = (red * scale - mean[0]) / std[0]
+        output[gIdx * imageHeight * imageWidth + pixelIndex] = (green * scale - mean[1]) / std[1]
+        output[bIdx * imageHeight * imageWidth + pixelIndex] = (blue * scale - mean[2]) / std[2]
       }
     }
 
