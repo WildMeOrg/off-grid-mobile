@@ -314,9 +314,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-OffgridMobile/Pods-OffgridMobile-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-OffgridMobile/Pods-OffgridMobile-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -353,9 +357,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-OffgridMobile/Pods-OffgridMobile-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-OffgridMobile/Pods-OffgridMobile-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -407,10 +415,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1771585509;
-				DEVELOPMENT_TEAM = 84V6KCAC49;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = OffgridMobile/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Off Grid - Local AI";
+				INFOPLIST_KEY_CFBundleDisplayName = EleBook;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -423,7 +431,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = ai.offgridmobile;
+				PRODUCT_BUNDLE_IDENTIFIER = org.ganesha.elebook;
 				PRODUCT_NAME = OffgridMobile;
 				SWIFT_OBJC_BRIDGING_HEADER = "OffgridMobile/OffgridMobile-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -439,9 +447,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1771585509;
-				DEVELOPMENT_TEAM = 84V6KCAC49;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = OffgridMobile/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Off Grid - Local AI";
+				INFOPLIST_KEY_CFBundleDisplayName = EleBook;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -454,7 +462,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = ai.offgridmobile;
+				PRODUCT_BUNDLE_IDENTIFIER = org.ganesha.elebook;
 				PRODUCT_NAME = OffgridMobile;
 				SWIFT_OBJC_BRIDGING_HEADER = "OffgridMobile/OffgridMobile-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -615,7 +623,7 @@
 				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/OffgridMobile.app/OffgridMobile";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ai.offgridmobile.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = org.ganesha.elebook.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUNDLE_LOADER)";
@@ -629,7 +637,7 @@
 				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/OffgridMobile.app/OffgridMobile";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ai.offgridmobile.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = org.ganesha.elebook.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUNDLE_LOADER)";

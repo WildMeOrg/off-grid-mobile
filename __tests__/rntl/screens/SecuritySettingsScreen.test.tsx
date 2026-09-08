@@ -16,12 +16,13 @@ import { render, fireEvent } from '@testing-library/react-native';
 
 // Navigation is globally mocked in jest.setup.ts
 const mockGoBack = jest.fn();
+const mockNavigate = jest.fn();
 jest.mock('@react-navigation/native', () => {
   const actual = jest.requireActual('@react-navigation/native');
   return {
     ...actual,
     useNavigation: () => ({
-      navigate: jest.fn(),
+      navigate: mockNavigate,
       goBack: mockGoBack,
       setOptions: jest.fn(),
       addListener: jest.fn(() => jest.fn()),
@@ -33,6 +34,13 @@ jest.mock('@react-navigation/native', () => {
     useIsFocused: () => true,
   };
 });
+
+jest.mock('../../../src/services/entraAuthService', () => ({
+  entraAuthService: {
+    isSignedIn: jest.fn(),
+    signOut: jest.fn(),
+  },
+}));
 
 const mockSetEnabled = jest.fn();
 const mockRemovePassphrase = jest.fn(() => Promise.resolve());
@@ -66,11 +74,11 @@ jest.mock('../../../src/components', () => ({
 }));
 
 jest.mock('../../../src/components/Button', () => ({
-  Button: ({ title, onPress }: any) => {
+  Button: ({ title, onPress, testID, disabled, loading }: any) => {
     const { TouchableOpacity, Text } = require('react-native');
     return (
-      <TouchableOpacity onPress={onPress}>
-        <Text>{title}</Text>
+      <TouchableOpacity onPress={onPress} testID={testID} disabled={disabled}>
+        <Text>{loading ? `${title} (loading)` : title}</Text>
       </TouchableOpacity>
     );
   },
@@ -150,11 +158,56 @@ jest.mock('../../../src/screens/PassphraseSetupScreen', () => ({
 }));
 
 import { SecuritySettingsScreen } from '../../../src/screens/SecuritySettingsScreen';
+import { entraAuthService } from '../../../src/services/entraAuthService';
+
+const mockIsSignedIn = entraAuthService.isSignedIn as jest.Mock;
+const mockSignOut = entraAuthService.signOut as jest.Mock;
 
 describe('SecuritySettingsScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockAuthEnabled = false;
+    mockIsSignedIn.mockResolvedValue(false);
+    mockSignOut.mockResolvedValue(undefined);
+  });
+
+  // ============================================================================
+  // Account section
+  // ============================================================================
+  describe('account section', () => {
+    it('shows "Not signed in" and a Sign In button that navigates to SignIn', async () => {
+      mockIsSignedIn.mockResolvedValue(false);
+      const { findByTestId, getByTestId } = render(<SecuritySettingsScreen />);
+
+      await findByTestId('account-status-label');
+      expect(getByTestId('account-status-label').props.children).toBe('Not signed in');
+
+      fireEvent.press(getByTestId('account-sign-in-button'));
+      expect(mockNavigate).toHaveBeenCalledWith('SignIn');
+    });
+
+    it('shows "Signed in" and a Sign Out button when already signed in', async () => {
+      mockIsSignedIn.mockResolvedValue(true);
+      const { findByTestId } = render(<SecuritySettingsScreen />);
+
+      const label = await findByTestId('account-status-label');
+      expect(label.props.children).toBe('Signed in');
+    });
+
+    it('sign out prompts for confirmation, then clears the session', async () => {
+      mockIsSignedIn.mockResolvedValue(true);
+      const { findByTestId, getByTestId, queryByTestId } = render(<SecuritySettingsScreen />);
+      await findByTestId('account-sign-out-button');
+
+      fireEvent.press(getByTestId('account-sign-out-button'));
+      expect(queryByTestId('custom-alert')).toBeTruthy();
+      expect(mockSignOut).not.toHaveBeenCalled();
+
+      fireEvent.press(getByTestId('alert-button-Sign Out'));
+      await findByTestId('account-status-label');
+
+      expect(mockSignOut).toHaveBeenCalled();
+    });
   });
 
   // ============================================================================

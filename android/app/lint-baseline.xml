@@ -2,179 +2,14 @@
 <issues format="6" by="lint 8.12.0" type="baseline" client="gradle" dependencies="false" name="AGP (8.12.0)" variant="all" version="8.12.0">
 
     <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="                if (currentModelPath == modelPath &amp;&amp; serverProcess?.isAlive == true &amp;&amp; isServerReady) {"
-        errorLine2="                                                                    ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="343"
-            column="69"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="            val alive = serverProcess?.isAlive == true"
-        errorLine2="                                       ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="461"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="            if (serverProcess?.isAlive != true) {"
-        errorLine2="                               ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="487"
-            column="32"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#waitFor`"
-        errorLine1="                if (!proc.waitFor(5, TimeUnit.SECONDS)) {"
-        errorLine2="                          ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="545"
-            column="27"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#destroyForcibly`"
-        errorLine1="                    proc.destroyForcibly()"
-        errorLine2="                         ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="546"
-            column="26"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="        promise.resolve(serverProcess?.isAlive == true &amp;&amp; isServerReady)"
-        errorLine2="                                       ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="572"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="            if (!isServerReady || serverProcess?.isAlive != true) {"
-        errorLine2="                                                 ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="621"
-            column="50"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="                Log.w(TAG, &quot;Server health check failed before generation. Process alive: ${serverProcess?.isAlive}&quot;)"
-        errorLine2="                                                                                                          ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="628"
-            column="107"/>
-    </issue>
-
-    <issue
-        id="NewApi"
-        message="Call requires API level 26 (current min is 24): `java.lang.Process#isAlive`"
-        errorLine1="                    val alive = serverProcess?.isAlive == true"
-        errorLine2="                                               ~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="795"
-            column="48"/>
-    </issue>
-
-    <issue
         id="RedundantLabel"
         message="Redundant label can be removed"
         errorLine1="        android:label=&quot;@string/app_name&quot;"
         errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/AndroidManifest.xml"
-            line="38"
+            line="29"
             column="9"/>
-    </issue>
-
-    <issue
-        id="AndroidGradlePluginVersion"
-        message="A newer version of Gradle than 8.13 is available: 8.14.4"
-        errorLine1="distributionUrl=https\://services.gradle.org/distributions/gradle-8.13-bin.zip"
-        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="$HOME/wednesday/on-device-llm/LocalLLM/android/gradle/wrapper/gradle-wrapper.properties"
-            line="3"
-            column="17"/>
-    </issue>
-
-    <issue
-        id="GradleDependency"
-        message="A newer version of androidx.test:core than 1.6.1 is available: 1.7.0"
-        errorLine1="    testImplementation(&quot;androidx.test:core:1.6.1&quot;)"
-        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="build.gradle"
-            line="156"
-            column="24"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.jetbrains.kotlinx:kotlinx-coroutines-android than 1.7.3 is available: 1.10.2"
-        errorLine1="    implementation(&quot;org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3&quot;)"
-        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="build.gradle"
-            line="147"
-            column="20"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.robolectric:robolectric than 4.13 is available: 4.16.1"
-        errorLine1="    testImplementation(&quot;org.robolectric:robolectric:4.13&quot;)"
-        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="build.gradle"
-            line="153"
-            column="24"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.mockito:mockito-core than 5.11.0 is available: 5.21.0"
-        errorLine1="    testImplementation(&quot;org.mockito:mockito-core:5.11.0&quot;)"
-        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="build.gradle"
-            line="154"
-            column="24"/>
-    </issue>
-
-    <issue
-        id="NewerVersionAvailable"
-        message="A newer version of org.mockito.kotlin:mockito-kotlin than 5.4.0 is available: 6.2.3"
-        errorLine1="    testImplementation(&quot;org.mockito.kotlin:mockito-kotlin:5.4.0&quot;)"
-        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="build.gradle"
-            line="155"
-            column="24"/>
     </issue>
 
     <issue
@@ -244,13 +79,69 @@
     </issue>
 
     <issue
+        id="Aligned16KB"
+        message="The native library `arm64-v8a/libcrsqlite.so` (from `OffgridMobile:op-engineering_op-sqlite:unspecified`) is not 16 KB aligned">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/ce49e0ccc087a4094ea52c9553b47fdd/transformed/out/jni/arm64-v8a/libcrsqlite.so"/>
+    </issue>
+
+    <issue
+        id="Aligned16KB"
+        message="The native library `arm64-v8a/libcrsqlite.so` (from `OffgridMobile:op-engineering_op-sqlite:unspecified`) is not 16 KB aligned">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/ce49e0ccc087a4094ea52c9553b47fdd/transformed/out/jni/arm64-v8a/libcrsqlite.so"/>
+    </issue>
+
+    <issue
+        id="Aligned16KB"
+        message="The native library `arm64-v8a/libcrsqlite.so` (from `OffgridMobile:op-engineering_op-sqlite:unspecified`) is not 16 KB aligned">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/ce49e0ccc087a4094ea52c9553b47fdd/transformed/out/jni/arm64-v8a/libcrsqlite.so"/>
+    </issue>
+
+    <issue
+        id="Aligned16KB"
+        message="The native library `arm64-v8a/libonnxruntimejsi.so` (from `OffgridMobile:onnxruntime-react-native:unspecified`) is not 16 KB aligned">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/fb9af2bf5865aefdfb374df69399c2a7/transformed/out/jni/arm64-v8a/libonnxruntimejsi.so"/>
+    </issue>
+
+    <issue
+        id="Aligned16KB"
+        message="The native library `arm64-v8a/libonnxruntimejsi.so` (from `OffgridMobile:onnxruntime-react-native:unspecified`) is not 16 KB aligned">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/fb9af2bf5865aefdfb374df69399c2a7/transformed/out/jni/arm64-v8a/libonnxruntimejsi.so"/>
+    </issue>
+
+    <issue
+        id="Aligned16KB"
+        message="The native library `arm64-v8a/libonnxruntimejsi.so` (from `OffgridMobile:onnxruntime-react-native:unspecified`) is not 16 KB aligned">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/fb9af2bf5865aefdfb374df69399c2a7/transformed/out/jni/arm64-v8a/libonnxruntimejsi.so"/>
+    </issue>
+
+    <issue
+        id="TrustAllX509TrustManager"
+        message="`checkClientTrusted` is empty, which could cause insecure network traffic due to trusting arbitrary TLS/SSL certificates presented by peers">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/d85862d108e5766d7149e0523b1c7cd8/transformed/out/jars/classes.jar"/>
+    </issue>
+
+    <issue
+        id="TrustAllX509TrustManager"
+        message="`checkServerTrusted` is empty, which could cause insecure network traffic due to trusting arbitrary TLS/SSL certificates presented by peers">
+        <location
+            file="$GRADLE_USER_HOME/caches/8.13/transforms/d85862d108e5766d7149e0523b1c7cd8/transformed/out/jars/classes.jar"/>
+    </issue>
+
+    <issue
         id="DataExtractionRules"
         message="The attribute `android:allowBackup` is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute `android:dataExtractionRules` specifying an `@xml` resource which configures cloud backups and device transfers on Android 12 and higher."
         errorLine1="      android:allowBackup=&quot;false&quot;"
         errorLine2="                           ~~~~~">
         <location
             file="src/main/AndroidManifest.xml"
-            line="25"
+            line="19"
             column="28"/>
     </issue>
 
@@ -421,97 +312,53 @@
 
     <issue
         id="IconMissingDensityFolder"
-        message="Missing density variation folders in `src/main/res`: drawable-hdpi">
+        message="Missing density variation folders in `src\main\res`: drawable-hdpi">
         <location
             file="src/main/res"/>
     </issue>
 
     <issue
         id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        sharedPrefs.edit()"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~">
+        message="Use the KTX extension function `Bitmap.scale` instead?"
+        errorLine1="                val next = Bitmap.createScaledBitmap(current, nextWidth, nextHeight, true)"
+        errorLine2="                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
-            file="src/main/java/ai/offgridmobile/download/DownloadCompleteBroadcastReceiver.kt"
-            line="37"
-            column="9"/>
+            file="src/main/java/org/ganesha/elebook/imagetensor/ImageTensorModule.kt"
+            line="46"
+            column="28"/>
     </issue>
 
     <issue
         id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="            val request = DownloadManager.Request(Uri.parse(url))"
-        errorLine2="                                                  ~~~~~~~~~~~~~~">
+        message="Use the KTX extension function `Bitmap.scale` instead?"
+        errorLine1="            val result = Bitmap.createScaledBitmap(current, targetWidth, targetHeight, true)"
+        errorLine2="                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
-            file="src/main/java/ai/offgridmobile/download/DownloadManagerModule.kt"
-            line="132"
-            column="51"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                    val uri = Uri.parse(localUri)"
-        errorLine2="                              ~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/download/DownloadManagerModule.kt"
-            line="267"
-            column="31"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        sharedPrefs.edit().putString(DOWNLOADS_KEY, downloads.toString()).apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/download/DownloadManagerModule.kt"
-            line="500"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        sharedPrefs.edit().putString(DOWNLOADS_KEY, newDownloads.toString()).apply()"
-        errorLine2="        ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/download/DownloadManagerModule.kt"
-            line="529"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="            sharedPrefs.edit().putString(DOWNLOADS_KEY, cleanedDownloads.toString()).apply()"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/download/DownloadManagerModule.kt"
-            line="575"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX function `createBitmap` instead?"
-        errorLine1="            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)"
-        errorLine2="                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="146"
+            file="src/main/java/org/ganesha/elebook/imagetensor/ImageTensorModule.kt"
+            line="53"
             column="26"/>
     </issue>
 
     <issue
         id="UseKtx"
-        message="Use the KTX function `createBitmap` instead?"
-        errorLine1="                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)"
-        errorLine2="                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="            val parsed = Uri.parse(uri)"
+        errorLine2="                         ~~~~~~~~~~~~~~">
         <location
-            file="src/main/java/ai/offgridmobile/localdream/LocalDreamModule.kt"
-            line="848"
-            column="30"/>
+            file="src/main/java/org/ganesha/elebook/imagetensor/ImageTensorModule.kt"
+            line="213"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        val parsed = Uri.parse(uri)"
+        errorLine2="                     ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/org/ganesha/elebook/embedding/LiteRtEmbeddingModule.kt"
+            line="123"
+            column="22"/>
     </issue>
 
 </issues>

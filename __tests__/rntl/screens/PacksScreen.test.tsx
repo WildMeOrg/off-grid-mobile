@@ -10,9 +10,15 @@
  */
 
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import { act, render, fireEvent, waitFor } from '@testing-library/react-native';
+import { Alert, Platform } from 'react-native';
 import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
-import type { EmbeddingPack } from '../../../src/types/wildlife';
+import { useAppStore } from '../../../src/stores/appStore';
+import { MIEWID_LITERT_MODEL_NAME, MIEWID_MODEL_NAME } from '../../../src/config/modelSources';
+import type {
+  EmbeddingPack,
+  MiewIDModelRecord,
+} from '../../../src/types/wildlife';
 
 // Mock navigation
 const mockNavigate = jest.fn();
@@ -40,7 +46,12 @@ jest.mock('react-native-safe-area-context', () => {
         {children}
       </View>
     ),
-    useSafeAreaInsets: jest.fn(() => ({ top: 0, right: 0, bottom: 0, left: 0 })),
+    useSafeAreaInsets: jest.fn(() => ({
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+    })),
   };
 });
 
@@ -59,7 +70,39 @@ jest.mock('../../../src/components/AnimatedListItem', () => ({
   },
 }));
 
+jest.mock('../../../src/services/modelSourceResolver', () => ({
+  resolveMiewidModelSource: jest.fn(),
+}));
+
+jest.mock('../../../src/services/miewidModelManager', () => ({
+  prepareMiewidModel: jest.fn(),
+}));
+
+jest.mock('../../../src/services/packDownloadService', () => ({
+  acquireLatestPack: jest.fn(),
+  checkLatestPackStatus: jest.fn(),
+}));
+
+jest.mock('../../../src/utils/authGate', () => ({
+  ensureSignedIn: jest.fn(),
+}));
+
 import { PacksScreen } from '../../../src/screens/PacksScreen';
+import { useFocusEffect as navigationUseFocusEffect } from '@react-navigation/native';
+import { resolveMiewidModelSource } from '../../../src/services/modelSourceResolver';
+import { prepareMiewidModel } from '../../../src/services/miewidModelManager';
+import {
+  acquireLatestPack,
+  checkLatestPackStatus,
+} from '../../../src/services/packDownloadService';
+import { ensureSignedIn } from '../../../src/utils/authGate';
+
+const mockResolveMiewidModelSource = resolveMiewidModelSource as jest.Mock;
+const mockUseFocusEffect = navigationUseFocusEffect as jest.Mock;
+const mockPrepareMiewidModel = prepareMiewidModel as jest.Mock;
+const mockAcquireLatestPack = acquireLatestPack as jest.Mock;
+const mockCheckLatestPackStatus = checkLatestPackStatus as jest.Mock;
+const mockEnsureSignedIn = ensureSignedIn as jest.Mock;
 
 // ---------------------------------------------------------------------------
 // Factory helper
@@ -67,6 +110,7 @@ import { PacksScreen } from '../../../src/screens/PacksScreen';
 
 const createPack = (overrides: Partial<EmbeddingPack> = {}): EmbeddingPack => ({
   id: 'pack-1',
+  packVersion: '2025-06-15T00:00:00Z',
   species: 'Megaptera novaeangliae',
   featureClass: 'fluke',
   displayName: 'Humpback Whale — Fluke',
@@ -85,10 +129,36 @@ const createPack = (overrides: Partial<EmbeddingPack> = {}): EmbeddingPack => ({
   ...overrides,
 });
 
+const readyModel: MiewIDModelRecord = {
+  path: '/mock/documents/models/miewid-4.1.0.onnx',
+  name: 'miewid',
+  version: '4.1.0',
+  sha256: 'abc123',
+  sizeBytes: 204_011_297,
+  status: 'ready',
+  verifiedAt: '2026-08-01T00:00:00.000Z',
+  format: 'onnx',
+};
+
+const latestModelSource = {
+  name: 'miewid',
+  version: '4.1.0',
+  url: 'https://example/model.onnx',
+  expectedSha256: 'abc123',
+  expectedSizeBytes: 204_011_297,
+  format: 'onnx' as const,
+};
+
 describe('PacksScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    useWildlifeStore.setState({ packs: [] });
+    mockUseFocusEffect.mockImplementation(() => undefined);
+    useWildlifeStore.setState({ packs: [], miewidModel: null });
+    mockEnsureSignedIn.mockResolvedValue(true);
+    mockResolveMiewidModelSource.mockResolvedValue({
+      ok: true,
+      source: latestModelSource,
+    });
   });
 
   // ==========================================================================
@@ -113,7 +183,9 @@ describe('PacksScreen', () => {
     it('shows empty state description', () => {
       const { getByText } = render(<PacksScreen />);
       expect(
-        getByText(/Download an embedding pack to start identifying individuals/),
+        getByText(
+          /Download an embedding pack to start identifying individuals/,
+        ),
       ).toBeTruthy();
     });
 
@@ -266,6 +338,405 @@ describe('PacksScreen', () => {
       expect(getByTestId('pack-card-0')).toBeTruthy();
       expect(getByTestId('pack-card-1')).toBeTruthy();
       expect(getByTestId('pack-card-2')).toBeTruthy();
+    });
+  });
+
+  // ==========================================================================
+  // Download and update actions
+  // ==========================================================================
+  describe('download button', () => {
+    it.each([null, 'missing', 'corrupt', 'incompatible'] as const)(
+      'repairs a %s model when the installed pack is current',
+      async status => {
+        const installedPack = createPack({ id: 'example-project', status: 'ready' });
+        useWildlifeStore.setState({
+          packs: [installedPack],
+          miewidModel: status ? { ...readyModel, status } : null,
+        });
+        mockCheckLatestPackStatus.mockResolvedValue({ ok: true, isLatest: true, latestVersion: installedPack.packVersion });
+        mockPrepareMiewidModel.mockResolvedValue(readyModel);
+        mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: installedPack });
+        let focusCallback: (() => void) | undefined;
+        mockUseFocusEffect.mockImplementation(callback => { focusCallback = callback; });
+        const { getByTestId, getByText } = render(<PacksScreen />);
+
+        act(() => focusCallback?.());
+        await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+        fireEvent.press(getByTestId('update-pack-button'));
+
+        await waitFor(() => expect(mockAcquireLatestPack).toHaveBeenCalledWith('example-project', {}, readyModel));
+        expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource);
+      },
+    );
+
+    it('reports that the installed pack is up to date without downloading it', async () => {
+      const installedPack = createPack({
+        id: 'example-project',
+        packVersion: '2026-09-05T11:06:39Z',
+        artifactSha256: 'pack-sha',
+        status: 'ready',
+      });
+      useWildlifeStore.setState({
+        packs: [installedPack],
+        miewidModel: readyModel,
+      });
+      mockCheckLatestPackStatus.mockResolvedValue({
+        ok: true,
+        isLatest: true,
+        latestVersion: installedPack.packVersion,
+      });
+      let focusCallback: (() => void) | undefined;
+      mockUseFocusEffect.mockImplementation(callback => {
+        focusCallback = callback;
+      });
+
+      const { getByText, getByTestId } = render(<PacksScreen />);
+      act(() => focusCallback?.());
+
+      await waitFor(() => expect(getByText('Up to date')).toBeTruthy());
+      expect(getByTestId('update-pack-button').props.accessibilityLabel).toBe(
+        'Check Again',
+      );
+      expect(mockAcquireLatestPack).not.toHaveBeenCalled();
+    });
+
+    it('shows download when empty and update when a pack is installed', async () => {
+      const { getByTestId, queryByTestId } = render(<PacksScreen />);
+      expect(getByTestId('download-pack-button')).toBeTruthy();
+      expect(queryByTestId('update-pack-button')).toBeNull();
+
+      await act(async () => {
+        useWildlifeStore.setState({ packs: [createPack()] });
+      });
+      expect(queryByTestId('download-pack-button')).toBeNull();
+      expect(getByTestId('update-pack-button')).toBeTruthy();
+    });
+
+    it('updates an installed pack through the latest-pack acquisition flow', async () => {
+      const installedPack = createPack({ id: 'example-project' });
+      useWildlifeStore.setState({
+        packs: [installedPack],
+        miewidModel: readyModel,
+      });
+      mockCheckLatestPackStatus.mockResolvedValue({
+        ok: true,
+        isLatest: false,
+        latestVersion: '2026-09-05T11:06:39Z',
+      });
+      mockAcquireLatestPack.mockResolvedValue({
+        ok: true,
+        pack: createPack({
+          packVersion: '2026-09-05T11:06:39Z',
+          individualCount: 66,
+        }),
+      });
+      let focusCallback: (() => void) | undefined;
+      mockUseFocusEffect.mockImplementation(callback => {
+        focusCallback = callback;
+      });
+
+      const { getByTestId, getByText } = render(<PacksScreen />);
+      act(() => focusCallback?.());
+      await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+      fireEvent.press(getByTestId('update-pack-button'));
+
+      await waitFor(() =>
+        expect(mockAcquireLatestPack).toHaveBeenCalledWith(
+          'example-project',
+          {},
+          readyModel,
+        ),
+      );
+      expect(mockPrepareMiewidModel).not.toHaveBeenCalled();
+    });
+
+    it('keeps an accessible label and exposes busy state while updating', async () => {
+      const installedPack = createPack({ id: 'example-project' });
+      useWildlifeStore.setState({
+        packs: [installedPack],
+        miewidModel: readyModel,
+      });
+      mockCheckLatestPackStatus.mockResolvedValue({
+        ok: true,
+        isLatest: false,
+        latestVersion: '2026-09-05T11:06:39Z',
+      });
+      let finishUpdate: ((value: { ok: true; pack: EmbeddingPack }) => void) | undefined;
+      mockAcquireLatestPack.mockReturnValue(
+        new Promise(resolve => {
+          finishUpdate = resolve;
+        }),
+      );
+      let focusCallback: (() => void) | undefined;
+      mockUseFocusEffect.mockImplementation(callback => {
+        focusCallback = callback;
+      });
+
+      const { getByTestId, getByText } = render(<PacksScreen />);
+      act(() => focusCallback?.());
+      await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+      fireEvent.press(getByTestId('update-pack-button'));
+
+      await waitFor(() => {
+        const button = getByTestId('update-pack-button');
+        expect(button.props.accessibilityRole).toBe('button');
+        expect(button.props.accessibilityLabel).toBe('Update to Latest Pack');
+        expect(button.props.accessibilityState).toEqual({
+          busy: true,
+          disabled: true,
+        });
+      });
+
+      await act(async () => {
+        finishUpdate?.({ ok: true, pack: createPack() });
+      });
+    });
+
+    it('starts only one update when the action is pressed twice rapidly', async () => {
+      let finishSignIn: ((value: boolean) => void) | undefined;
+      mockEnsureSignedIn.mockReturnValue(
+        new Promise(resolve => {
+          finishSignIn = resolve;
+        }),
+      );
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      expect(mockEnsureSignedIn).toHaveBeenCalledTimes(1);
+      await act(async () => finishSignIn?.(false));
+    });
+
+    it('contains a rejected sign-in check and allows a later retry', async () => {
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+      mockEnsureSignedIn
+        .mockRejectedValueOnce(new Error('auth storage unavailable'))
+        .mockResolvedValueOnce(false);
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+      await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+
+      fireEvent.press(getByTestId('download-pack-button'));
+      await waitFor(() => expect(mockEnsureSignedIn).toHaveBeenCalledTimes(2));
+    });
+
+    it('does not start the download when not signed in', async () => {
+      mockEnsureSignedIn.mockResolvedValue(false);
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() => expect(mockEnsureSignedIn).toHaveBeenCalled());
+      expect(mockResolveMiewidModelSource).not.toHaveBeenCalled();
+      expect(mockAcquireLatestPack).not.toHaveBeenCalled();
+    });
+
+    it('skips the model download when the installed model matches the latest artifact', async () => {
+      useWildlifeStore.setState({ miewidModel: readyModel });
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() =>
+        expect(mockAcquireLatestPack).toHaveBeenCalledWith(
+          'example-project',
+          {},
+          readyModel,
+        ),
+      );
+      expect(mockResolveMiewidModelSource).toHaveBeenCalled();
+      expect(mockPrepareMiewidModel).not.toHaveBeenCalled();
+    });
+
+    it('acquires the model first when it is not yet installed, then the pack', async () => {
+      mockPrepareMiewidModel.mockResolvedValue(readyModel);
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() =>
+        expect(mockAcquireLatestPack).toHaveBeenCalledWith(
+          'example-project',
+          {},
+          readyModel,
+        ),
+      );
+      expect(mockResolveMiewidModelSource).toHaveBeenCalled();
+      expect(mockPrepareMiewidModel).toHaveBeenCalled();
+    });
+
+    it('requests the standard ONNX model name when GPU preference is off', async () => {
+      mockPrepareMiewidModel.mockResolvedValue(readyModel);
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() => expect(mockResolveMiewidModelSource).toHaveBeenCalled());
+      expect(mockResolveMiewidModelSource).toHaveBeenCalledWith(MIEWID_MODEL_NAME);
+    });
+
+    it('requests the LiteRT/GPU model name when the GPU preference is on (Android)', async () => {
+      const originalPlatformOsDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+      useAppStore.getState().setPreferGpuModel(true);
+      mockPrepareMiewidModel.mockResolvedValue(readyModel);
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+
+      try {
+        const { getByTestId } = render(<PacksScreen />);
+        fireEvent.press(getByTestId('download-pack-button'));
+
+        await waitFor(() => expect(mockResolveMiewidModelSource).toHaveBeenCalled());
+        expect(mockResolveMiewidModelSource).toHaveBeenCalledWith(MIEWID_LITERT_MODEL_NAME);
+      } finally {
+        useAppStore.getState().setPreferGpuModel(false);
+        if (originalPlatformOsDescriptor) {
+          Object.defineProperty(Platform, 'OS', originalPlatformOsDescriptor);
+        }
+      }
+    });
+
+    it('ignores the GPU preference on iOS and still requests the ONNX model', async () => {
+      useAppStore.getState().setPreferGpuModel(true);
+      mockPrepareMiewidModel.mockResolvedValue(readyModel);
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+
+      try {
+        const { getByTestId } = render(<PacksScreen />);
+        fireEvent.press(getByTestId('download-pack-button'));
+
+        await waitFor(() => expect(mockResolveMiewidModelSource).toHaveBeenCalled());
+        expect(mockResolveMiewidModelSource).toHaveBeenCalledWith(MIEWID_MODEL_NAME);
+      } finally {
+        useAppStore.getState().setPreferGpuModel(false);
+      }
+    });
+
+    it('makes the Update button reachable when only the model format needs to change (pack itself is already current)', async () => {
+      const originalPlatformOsDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+      useAppStore.getState().setPreferGpuModel(true);
+
+      const installedPack = createPack({
+        id: 'example-project',
+        packVersion: '2026-09-05T11:06:39Z',
+        artifactSha256: 'pack-sha',
+        status: 'ready',
+      });
+      useWildlifeStore.setState({
+        packs: [installedPack],
+        miewidModel: readyModel, // format: 'onnx', but the GPU preference now wants 'tflite'
+      });
+      mockCheckLatestPackStatus.mockResolvedValue({
+        ok: true,
+        isLatest: true,
+        latestVersion: installedPack.packVersion,
+      });
+      mockResolveMiewidModelSource.mockResolvedValue({
+        ok: true,
+        source: { ...latestModelSource, format: 'tflite' as const, expectedSha256: 'gpu-sha' },
+      });
+      mockPrepareMiewidModel.mockResolvedValue({ ...readyModel, format: 'tflite' });
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+      let focusCallback: (() => void) | undefined;
+      mockUseFocusEffect.mockImplementation(callback => {
+        focusCallback = callback;
+      });
+
+      try {
+        const { getByText, getByTestId } = render(<PacksScreen />);
+        act(() => focusCallback?.());
+
+        // packUpdateState alone would say "Up to date" -- the model-format
+        // mismatch must override that so the button is actually pressable.
+        await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+        fireEvent.press(getByTestId('update-pack-button'));
+
+        await waitFor(() =>
+          expect(mockResolveMiewidModelSource).toHaveBeenCalledWith(MIEWID_LITERT_MODEL_NAME),
+        );
+        expect(mockPrepareMiewidModel).toHaveBeenCalled();
+        expect(mockAcquireLatestPack).toHaveBeenCalled();
+      } finally {
+        useAppStore.getState().setPreferGpuModel(false);
+        if (originalPlatformOsDescriptor) {
+          Object.defineProperty(Platform, 'OS', originalPlatformOsDescriptor);
+        }
+      }
+    });
+
+    it('replaces a ready model when the latest artifact identity changed', async () => {
+      useWildlifeStore.setState({
+        miewidModel: {
+          ...readyModel,
+          version: '4.0.0',
+          sha256: 'old-hash',
+        },
+      });
+      mockPrepareMiewidModel.mockResolvedValue(readyModel);
+      mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: createPack() });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() =>
+        expect(mockAcquireLatestPack).toHaveBeenCalledWith(
+          'example-project',
+          {},
+          readyModel,
+        ),
+      );
+      expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource);
+    });
+
+    it('alerts and stops when resolving the model source fails', async () => {
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+      mockResolveMiewidModelSource.mockResolvedValue({
+        ok: false,
+        code: 'network-error',
+        message: 'offline',
+      });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+      expect(mockPrepareMiewidModel).not.toHaveBeenCalled();
+      expect(mockAcquireLatestPack).not.toHaveBeenCalled();
+    });
+
+    it('alerts and stops when the model download does not end in ready status', async () => {
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+      mockPrepareMiewidModel.mockResolvedValue({
+        ...readyModel,
+        status: 'corrupt',
+      });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+      expect(mockAcquireLatestPack).not.toHaveBeenCalled();
+    });
+
+    it('alerts when the pack download fails', async () => {
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+      useWildlifeStore.setState({ miewidModel: readyModel });
+      mockAcquireLatestPack.mockResolvedValue({
+        ok: false,
+        code: 'checksum-mismatch',
+        message: 'bad hash',
+      });
+
+      const { getByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+
+      await waitFor(() => expect(alertSpy).toHaveBeenCalled());
     });
   });
 });

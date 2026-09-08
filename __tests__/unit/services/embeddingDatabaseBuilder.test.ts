@@ -25,6 +25,7 @@ import type { EmbeddingPack, LocalIndividual, PackIndividual } from '../../../sr
 function makePack(overrides: Partial<EmbeddingPack> = {}): EmbeddingPack {
   return {
     id: 'pack-horse-001',
+    packVersion: '2026-03-01T00:00:00Z',
     species: 'horse',
     featureClass: 'horse+face',
     displayName: 'Test Horses',

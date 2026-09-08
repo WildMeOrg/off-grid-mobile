@@ -1,11 +1,5 @@
 import React, { useMemo } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  Image,
-  TouchableOpacity,
-} from 'react-native';
+import { View, Text, ScrollView, Image, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,6 +12,7 @@ import { TYPOGRAPHY, SPACING } from '../constants';
 import { useWildlifeStore } from '../stores/wildlifeStore';
 import type { Observation } from '../types/wildlife';
 import type { RootStackParamList } from '../navigation/types';
+import { toDisplayUri } from '../utils/imageUri';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -62,7 +57,10 @@ export const WildlifeHomeScreen: React.FC = () => {
         pending++;
       } else if (item.status === 'synced') {
         synced++;
-      } else if (item.status === 'failed' || item.status === 'failedPermanent') {
+      } else if (
+        item.status === 'failed' ||
+        item.status === 'failedPermanent'
+      ) {
         failed++;
       }
     }
@@ -83,22 +81,32 @@ export const WildlifeHomeScreen: React.FC = () => {
     <SafeAreaView
       style={styles.container}
       testID="wildlife-home-screen"
-      edges={['top']}>
+      edges={['top']}
+    >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Wildlife ID</Text>
+        <Text style={styles.title}>EleBook</Text>
+        <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={() => navigation.navigate('Settings')}
+          testID="home-settings-button"
+        >
+          <Icon name="settings" size={22} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+      >
         {/* Quick Capture Button */}
         <TouchableOpacity
           style={styles.captureButton}
           onPress={handleCapture}
           activeOpacity={0.8}
-          testID="capture-button">
+          testID="capture-button"
+        >
           <Icon name="camera" size={24} color={colors.background} />
           <Text style={styles.captureButtonText}>New Capture</Text>
         </TouchableOpacity>
@@ -135,10 +143,11 @@ export const WildlifeHomeScreen: React.FC = () => {
                   key={obs.id}
                   index={index}
                   onPress={() => handleObservationPress(obs)}
-                  testID={`observation-item-${index}`}>
+                  testID={`observation-item-${index}`}
+                >
                   <View style={styles.observationRow}>
                     <Image
-                      source={{ uri: obs.photoUri }}
+                      source={{ uri: toDisplayUri(obs.photoUri) }}
                       style={styles.thumbnail}
                       testID={`observation-thumbnail-${index}`}
                     />
@@ -181,7 +190,8 @@ export const WildlifeHomeScreen: React.FC = () => {
                 style={[
                   styles.syncValue,
                   syncCounts.failed > 0 && { color: colors.error },
-                ]}>
+                ]}
+              >
                 {syncCounts.failed}
               </Text>
               <Text style={styles.syncLabel}>failed</Text>
@@ -199,6 +209,9 @@ const createStyles = (colors: ThemeColors, shadows: ThemeShadows) => ({
     backgroundColor: colors.background,
   },
   header: {
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
     borderBottomWidth: 1,
@@ -206,6 +219,9 @@ const createStyles = (colors: ThemeColors, shadows: ThemeShadows) => ({
     backgroundColor: colors.surface,
     ...shadows.small,
     zIndex: 1,
+  },
+  settingsButton: {
+    padding: SPACING.xs,
   },
   title: {
     ...TYPOGRAPHY.h1,

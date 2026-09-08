@@ -1,0 +1,11 @@
+diff --git a/node_modules/@noble/hashes/package.json b/node_modules/@noble/hashes/package.json
+--- a/node_modules/@noble/hashes/package.json
++++ b/node_modules/@noble/hashes/package.json
+@@ -50,6 +50,7 @@
+       "import": "./esm/index.js",
+       "require": "./index.js"
+     },
++    "./crypto.js": "./crypto.js",
+     "./crypto": {
+       "node": {
+         "import": "./esm/cryptoNode.js",

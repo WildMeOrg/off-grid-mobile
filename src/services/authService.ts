@@ -1,86 +1,80 @@
 import * as Keychain from 'react-native-keychain';
 import logger from '../utils/logger';
+import { createPassphraseVerifier, verifyPassphraseVerifier } from './passphraseVerifier';
+import { matchesLegacyPassphrase } from './legacyPassphrase';
 
-const SERVICE_NAME = 'ai.offgridmobile.auth';
-const PASSPHRASE_KEY = 'passphrase_hash';
+const LEGACY_SERVICE_NAME = 'ai.offgridmobile.auth';
+const SERVICE_NAME = 'org.ganesha.elebook.local-lock.v2';
+const PASSPHRASE_KEY = 'passphrase_verifier';
 
 class AuthService {
-  private hashPassphrase(passphrase: string): string {
-    // Simple hash - in production, consider using bcrypt via native module
-    // We use a deterministic hash since we're comparing hashes
-    let hash = 0;
-    for (let i = 0; i < passphrase.length; i++) {
-      const char = passphrase.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char; // eslint-disable-line no-bitwise
-      hash = hash & hash; // eslint-disable-line no-bitwise
-    }
-    // Add some complexity with multiple rounds
-    const baseHash = Math.abs(hash).toString(16);
-    let extendedHash = baseHash;
-    for (let i = 0; i < 1000; i++) {
-      let tempHash = 0;
-      for (let j = 0; j < extendedHash.length; j++) {
-        const char = extendedHash.charCodeAt(j);
-        tempHash = ((tempHash << 5) - tempHash) + char; // eslint-disable-line no-bitwise
-        tempHash = tempHash & tempHash; // eslint-disable-line no-bitwise
-      }
-      extendedHash = Math.abs(tempHash).toString(16) + extendedHash.slice(0, 8);
-    }
-    return extendedHash;
-  }
-
   async setPassphrase(passphrase: string): Promise<boolean> {
     try {
-      const hash = this.hashPassphrase(passphrase);
-      await Keychain.setGenericPassword(PASSPHRASE_KEY, hash, {
+      const verifier = await createPassphraseVerifier(passphrase);
+      const written = await Keychain.setGenericPassword(PASSPHRASE_KEY, verifier, {
         service: SERVICE_NAME,
         accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED,
       });
+      if (!written) {
+        return false;
+      }
+      const stored = await this.readEntry(SERVICE_NAME);
+      if (!stored || stored.password !== verifier) {
+        return false;
+      }
+      try {
+        if (!(await this.removeEntry(LEGACY_SERVICE_NAME))) {
+          logger.warn('Legacy lock cleanup failed; the current verifier remains authoritative');
+        }
+      } catch {
+        logger.warn('Legacy lock cleanup failed; the current verifier remains authoritative');
+      }
       return true;
-    } catch (error) {
-      logger.error('Failed to set passphrase:', error);
+    } catch {
+      logger.error('Failed to store the local passphrase verifier');
       return false;
     }
   }
 
   async verifyPassphrase(passphrase: string): Promise<boolean> {
     try {
-      const credentials = await Keychain.getGenericPassword({
-        service: SERVICE_NAME,
-      });
+      const credentials = await this.readEntry(SERVICE_NAME);
 
-      if (!credentials) {
+      if (credentials) {
+        return await verifyPassphraseVerifier(passphrase, credentials.password);
+      }
+      const legacy = await this.readEntry(LEGACY_SERVICE_NAME);
+      if (!legacy || !matchesLegacyPassphrase(passphrase, legacy.password)) {
         return false;
       }
-
-      const inputHash = this.hashPassphrase(passphrase);
-      return inputHash === credentials.password;
-    } catch (error) {
-      logger.error('Failed to verify passphrase:', error);
+      return await this.setPassphrase(passphrase);
+    } catch {
+      logger.error('Failed to verify the local passphrase');
       return false;
     }
   }
 
   async hasPassphrase(): Promise<boolean> {
     try {
-      const credentials = await Keychain.getGenericPassword({
-        service: SERVICE_NAME,
-      });
-      return credentials !== false;
-    } catch (error) {
-      logger.error('Failed to check passphrase:', error);
-      return false;
+      const credentials = await this.readEntry(SERVICE_NAME);
+      if (credentials) {
+        return true;
+      }
+      return (await this.readEntry(LEGACY_SERVICE_NAME)) !== false;
+    } catch {
+      logger.error('Unable to read lock state; keeping the local lock enabled');
+      return true;
     }
   }
 
   async removePassphrase(): Promise<boolean> {
     try {
-      await Keychain.resetGenericPassword({
-        service: SERVICE_NAME,
-      });
-      return true;
-    } catch (error) {
-      logger.error('Failed to remove passphrase:', error);
+      if (!(await this.removeEntry(LEGACY_SERVICE_NAME))) {
+        return false;
+      }
+      return await this.removeEntry(SERVICE_NAME);
+    } catch {
+      logger.error('Failed to remove the local passphrase');
       return false;
     }
   }
@@ -91,6 +85,24 @@ class AuthService {
       return false;
     }
     return this.setPassphrase(newPassphrase);
+  }
+
+  private async removeEntry(service: string): Promise<boolean> {
+    if (!(await this.readEntry(service))) {
+      return true;
+    }
+    return Keychain.resetGenericPassword({ service });
+  }
+
+  private async readEntry(service: string): Promise<{ password: string } | false> {
+    const entry = await Keychain.getGenericPassword({ service });
+    if (entry === false) {
+      return false;
+    }
+    if (!entry || typeof entry.password !== 'string') {
+      throw new Error('Invalid secure-storage response');
+    }
+    return entry;
   }
 }
 

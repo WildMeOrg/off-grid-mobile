@@ -7,7 +7,12 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
+import {
+  hydrateObservationsFromDb,
+  useWildlifeStore,
+} from '../../../src/stores/wildlifeStore';
+import { initDatabase } from '../../../src/services/database';
+import * as database from '../../../src/services/database';
 import type {
   EmbeddingPack,
   Observation,
@@ -17,12 +22,32 @@ import type {
   SyncQueueItem,
 } from '../../../src/types';
 
+// The mutating actions are wrapped in jest.fn() that pass through to
+// the real (op-sqlite-mocked) implementation by default -- this lets the
+// "rollback on SQLite write failure" tests below override one call with
+// mockRejectedValueOnce, while every other test in this file keeps
+// exercising the real repository logic unchanged.
+jest.mock('../../../src/services/database', () => {
+  const actual = jest.requireActual('../../../src/services/database');
+  return {
+    ...actual,
+    insertObservationWithDetections: jest.fn(actual.insertObservationWithDetections),
+    updateObservationNotes: jest.fn(actual.updateObservationNotes),
+    updateDetectionFields: jest.fn(actual.updateDetectionFields),
+    upsertSyncQueueItem: jest.fn(actual.upsertSyncQueueItem),
+    updateSyncQueueFields: jest.fn(actual.updateSyncQueueFields),
+    listObservationsWithDetections: jest.fn(actual.listObservationsWithDetections),
+    listSyncQueue: jest.fn(actual.listSyncQueue),
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Factory helpers (local to this test file)
 // ---------------------------------------------------------------------------
 
 const makePack = (overrides: Partial<EmbeddingPack> = {}): EmbeddingPack => ({
   id: 'pack-1',
+  packVersion: '2025-06-01T00:00:00Z',
   species: 'whale_shark',
   featureClass: 'right_dorsal_fin',
   displayName: 'Whale Shark - Right Dorsal Fin',
@@ -62,6 +87,7 @@ const makeDetection = (overrides: Partial<Detection> = {}): Detection => ({
     submitterId: null,
     projectId: null,
   },
+  ganeshaSubmissionId: null,
   ...overrides,
 });
 
@@ -107,6 +133,10 @@ const makeSyncQueueItem = (overrides: Partial<SyncQueueItem> = {}): SyncQueueIte
 // ---------------------------------------------------------------------------
 
 describe('wildlifeStore', () => {
+  beforeAll(async () => {
+    await initDatabase();
+  });
+
   beforeEach(() => {
     useWildlifeStore.getState().reset();
   });
@@ -193,6 +223,24 @@ describe('wildlifeStore', () => {
       useWildlifeStore.getState().addObservation(makeObservation({ id: 'obs-2' }));
 
       expect(useWildlifeStore.getState().observations).toHaveLength(2);
+    });
+
+    it('updates observation notes in memory and SQLite', async () => {
+      await useWildlifeStore
+        .getState()
+        .addObservation(makeObservation({ id: 'obs-1', fieldNotes: null }));
+
+      await useWildlifeStore
+        .getState()
+        .updateObservationNotes('obs-1', 'Herd moving north');
+
+      expect(useWildlifeStore.getState().observations[0].fieldNotes).toBe(
+        'Herd moving north',
+      );
+      expect(database.updateObservationNotes).toHaveBeenCalledWith(
+        'obs-1',
+        'Herd moving north',
+      );
     });
   });
 
@@ -422,6 +470,46 @@ describe('wildlifeStore', () => {
     });
   });
 
+  describe('startup upload recovery', () => {
+    it('durably makes interrupted uploads retryable without changing other statuses or receipts', async () => {
+      const interrupted = makeSyncQueueItem({
+        status: 'uploading',
+        retryCount: 2,
+        lastAttempt: '2025-06-15T11:00:00Z',
+        wildbookEncounterIds: ['receipt-1'],
+      });
+      const unchanged = (['pending', 'failed', 'synced'] as const).map((status) =>
+        makeSyncQueueItem({ observationId: status, status }),
+      );
+      (database.listObservationsWithDetections as jest.Mock).mockResolvedValueOnce([makeObservation()]);
+      (database.listSyncQueue as jest.Mock).mockResolvedValueOnce([interrupted, ...unchanged]);
+      (database.updateSyncQueueFields as jest.Mock).mockClear();
+
+      await hydrateObservationsFromDb();
+
+      expect(database.updateSyncQueueFields).toHaveBeenCalledTimes(1);
+      expect(database.updateSyncQueueFields).toHaveBeenCalledWith('obs-1', {
+        status: 'failed',
+        lastError: 'Upload interrupted. Please retry.',
+      });
+      expect(useWildlifeStore.getState().syncQueue).toEqual([
+        { ...interrupted, status: 'failed', lastError: 'Upload interrupted. Please retry.' },
+        ...unchanged,
+      ]);
+      expect(useWildlifeStore.getState().observations).toEqual([makeObservation()]);
+    });
+
+    it('does not publish recovered state if the recovery write fails', async () => {
+      (database.listObservationsWithDetections as jest.Mock).mockResolvedValueOnce([makeObservation()]);
+      (database.listSyncQueue as jest.Mock).mockResolvedValueOnce([makeSyncQueueItem({ status: 'uploading' })]);
+      (database.updateSyncQueueFields as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(hydrateObservationsFromDb()).rejects.toThrow('disk full');
+
+      expect(useWildlifeStore.getState().syncQueue).toEqual([]);
+    });
+  });
+
   // ========================================================================
   // MiewID Model Record
   // ========================================================================
@@ -436,6 +524,7 @@ describe('wildlifeStore', () => {
       sizeBytes: 103_859_027,
       status: 'ready',
       verifiedAt: '2026-08-01T00:00:00.000Z',
+      format: 'onnx',
       ...overrides,
     });
 
@@ -478,9 +567,75 @@ describe('wildlifeStore', () => {
   });
 
   // ========================================================================
-  // Persist migration (version 0 → 1)
+  // Persist migration
   // ========================================================================
   describe('persist migration', () => {
+    it.each([1, 3])('durably imports retained observations and receipts from version %s', async (version) => {
+      const observation = makeObservation();
+      const queueItem = makeSyncQueueItem({ status: 'synced', wildbookEncounterIds: ['receipt-1'] });
+      await AsyncStorage.setItem('wildlife-store', JSON.stringify({
+        state: { observations: [observation], syncQueue: [queueItem], localIndividuals: [makeLocalIndividual()] },
+        version,
+      }));
+
+      await useWildlifeStore.persist.rehydrate();
+      const retained = JSON.parse((await AsyncStorage.getItem('wildlife-store'))!);
+      expect(retained.state.legacyObservationData).toEqual({ observations: [observation], syncQueue: [queueItem] });
+
+      await hydrateObservationsFromDb();
+
+      expect(await database.listObservationsWithDetections()).toEqual([observation]);
+      expect(await database.listSyncQueue()).toEqual([queueItem]);
+      expect(useWildlifeStore.getState().observations).toEqual([observation]);
+      expect(useWildlifeStore.getState().localIndividuals).toEqual([makeLocalIndividual()]);
+      const persisted = JSON.parse((await AsyncStorage.getItem('wildlife-store'))!);
+      expect(persisted.state.legacyObservationData).toBeNull();
+      expect(persisted.state.observations).toBeUndefined();
+      expect(persisted.state.syncQueue).toBeUndefined();
+    });
+
+    it('retains the migration backup across write failures and resumes without duplicating imported data', async () => {
+      const observation = makeObservation();
+      const queueItem = makeSyncQueueItem({ status: 'synced', wildbookEncounterIds: ['receipt-1'] });
+      const orphanQueueItem = makeSyncQueueItem({ observationId: 'legacy-orphan', status: 'failed' });
+      const legacyData = { observations: [observation], syncQueue: [queueItem, orphanQueueItem] };
+      await AsyncStorage.setItem('wildlife-store', JSON.stringify({ state: legacyData, version: 1 }));
+      await useWildlifeStore.persist.rehydrate();
+      const queueRepository = jest.requireActual('../../../src/services/database/syncQueueRepository');
+      const writeSpy = jest.spyOn(queueRepository, 'upsertSyncQueueItem').mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(hydrateObservationsFromDb()).rejects.toThrow('disk full');
+      writeSpy.mockRestore();
+      useWildlifeStore.getState().setMiewidModel(null);
+      expect(JSON.parse((await AsyncStorage.getItem('wildlife-store'))!).state.legacyObservationData).toEqual(legacyData);
+      expect(await database.listObservationsWithDetections()).toEqual([observation]);
+      expect(await database.listSyncQueue()).toEqual([queueItem]);
+
+      await useWildlifeStore.persist.rehydrate();
+      await hydrateObservationsFromDb();
+
+      expect(await database.listObservationsWithDetections()).toEqual([observation]);
+      expect(await database.listSyncQueue()).toEqual([orphanQueueItem, queueItem]);
+      expect(JSON.parse((await AsyncStorage.getItem('wildlife-store'))!).state.legacyObservationData).toBeNull();
+    });
+
+    it('does not overwrite newer SQLite decisions or upload receipts during legacy import', async () => {
+      const currentObservation = makeObservation({ fieldNotes: 'Newer SQLite notes' });
+      const currentQueue = makeSyncQueueItem({ status: 'synced', wildbookEncounterIds: ['new-receipt'] });
+      await database.insertObservationWithDetections(currentObservation);
+      await database.upsertSyncQueueItem(currentQueue);
+      await AsyncStorage.setItem('wildlife-store', JSON.stringify({
+        state: { observations: [makeObservation()], syncQueue: [makeSyncQueueItem()] },
+        version: 1,
+      }));
+
+      await useWildlifeStore.persist.rehydrate();
+      await hydrateObservationsFromDb();
+
+      expect(useWildlifeStore.getState().observations).toEqual([currentObservation]);
+      expect(useWildlifeStore.getState().syncQueue).toEqual([currentQueue]);
+    });
+
     it('migrates a legacy miewidModelPath string into a model record', async () => {
       await AsyncStorage.setItem(
         'wildlife-store',
@@ -501,6 +656,7 @@ describe('wildlifeStore', () => {
         sizeBytes: null,
         status: 'missing',
         verifiedAt: null,
+        format: 'onnx',
       });
       expect(
         (state as unknown as { miewidModelPath?: unknown }).miewidModelPath,
@@ -521,8 +677,45 @@ describe('wildlifeStore', () => {
       expect(useWildlifeStore.getState().miewidModel).toBeNull();
     });
 
+    it('adds an unknown artifact version to legacy packs', async () => {
+      const legacyPack = makePack();
+      const { packVersion: _packVersion, ...packWithoutVersion } = legacyPack;
+      await AsyncStorage.setItem(
+        'wildlife-store',
+        JSON.stringify({
+          state: { packs: [packWithoutVersion] },
+          version: 1,
+        }),
+      );
+
+      await useWildlifeStore.persist.rehydrate();
+
+      expect(useWildlifeStore.getState().packs[0].packVersion).toBe('unknown');
+    });
+
     it('rehydrates a current-version record unchanged', async () => {
       const record = {
+        path: '/models/miewid-4.1.0.onnx',
+        name: 'miewid',
+        version: '4.1.0',
+        sha256: 'abc123',
+        sizeBytes: 103_859_027,
+        status: 'ready',
+        verifiedAt: '2026-08-01T00:00:00.000Z',
+        format: 'onnx',
+      };
+      await AsyncStorage.setItem(
+        'wildlife-store',
+        JSON.stringify({ state: { miewidModel: record }, version: 3 }),
+      );
+
+      await useWildlifeStore.persist.rehydrate();
+
+      expect(useWildlifeStore.getState().miewidModel).toEqual(record);
+    });
+
+    it('backfills format onnx for a pre-format-field (version 2) record', async () => {
+      const legacyRecord = {
         path: '/models/miewid-4.1.0.onnx',
         name: 'miewid',
         version: '4.1.0',
@@ -533,12 +726,15 @@ describe('wildlifeStore', () => {
       };
       await AsyncStorage.setItem(
         'wildlife-store',
-        JSON.stringify({ state: { miewidModel: record }, version: 1 }),
+        JSON.stringify({ state: { miewidModel: legacyRecord }, version: 2 }),
       );
 
       await useWildlifeStore.persist.rehydrate();
 
-      expect(useWildlifeStore.getState().miewidModel).toEqual(record);
+      expect(useWildlifeStore.getState().miewidModel).toEqual({
+        ...legacyRecord,
+        format: 'onnx',
+      });
     });
   });
 
@@ -560,6 +756,7 @@ describe('wildlifeStore', () => {
         sizeBytes: 1000,
         status: 'ready',
         verifiedAt: '2026-08-01T00:00:00.000Z',
+        format: 'onnx',
       });
       useWildlifeStore.getState().getNextFieldId(); // bumps counter to 2
 
@@ -572,6 +769,83 @@ describe('wildlifeStore', () => {
       expect(state.syncQueue).toEqual([]);
       expect(state.miewidModel).toBeNull();
       expect(state.nextFieldId).toBe(1);
+    });
+  });
+
+  // ========================================================================
+  // Rollback on SQLite write failure
+  //
+  // These four actions optimistically update in-memory state before the
+  // SQLite write resolves (so existing synchronous call sites keep working).
+  // If the write fails, the in-memory state must be rolled back -- otherwise
+  // the UI would show data that was never durably saved and silently
+  // vanishes on the next app restart.
+  // ========================================================================
+  describe('rollback on SQLite write failure', () => {
+    it('addObservation rolls back the observation if the SQLite write fails', async () => {
+      (database.insertObservationWithDetections as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+      const obs = makeObservation();
+
+      await expect(useWildlifeStore.getState().addObservation(obs)).rejects.toThrow('disk full');
+
+      expect(useWildlifeStore.getState().observations).toHaveLength(0);
+    });
+
+    it('updateDetection restores the previous observation if the SQLite write fails', async () => {
+      const obs = makeObservation({
+        id: 'obs-1',
+        detections: [makeDetection({ id: 'det-1', observationId: 'obs-1', speciesConfidence: 0.5 })],
+      });
+      await useWildlifeStore.getState().addObservation(obs);
+
+      (database.updateDetectionFields as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(
+        useWildlifeStore.getState().updateDetection('obs-1', 'det-1', { speciesConfidence: 0.99 }),
+      ).rejects.toThrow('disk full');
+
+      expect(useWildlifeStore.getState().observations[0].detections[0].speciesConfidence).toBe(0.5);
+    });
+
+    it('updateObservationNotes restores previous notes if the SQLite write fails', async () => {
+      await useWildlifeStore
+        .getState()
+        .addObservation(makeObservation({ id: 'obs-1', fieldNotes: 'Original' }));
+      (database.updateObservationNotes as jest.Mock).mockRejectedValueOnce(
+        new Error('disk full'),
+      );
+
+      await expect(
+        useWildlifeStore
+          .getState()
+          .updateObservationNotes('obs-1', 'Replacement'),
+      ).rejects.toThrow('disk full');
+
+      expect(useWildlifeStore.getState().observations[0].fieldNotes).toBe(
+        'Original',
+      );
+    });
+
+    it('addToSyncQueue rolls back the item if the SQLite write fails', async () => {
+      (database.upsertSyncQueueItem as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+      const item = makeSyncQueueItem();
+
+      await expect(useWildlifeStore.getState().addToSyncQueue(item)).rejects.toThrow('disk full');
+
+      expect(useWildlifeStore.getState().syncQueue).toHaveLength(0);
+    });
+
+    it('updateSyncStatus restores the previous item if the SQLite write fails', async () => {
+      const item = makeSyncQueueItem({ observationId: 'obs-1', status: 'pending' });
+      await useWildlifeStore.getState().addToSyncQueue(item);
+
+      (database.updateSyncQueueFields as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(
+        useWildlifeStore.getState().updateSyncStatus('obs-1', { status: 'synced' }),
+      ).rejects.toThrow('disk full');
+
+      expect(useWildlifeStore.getState().syncQueue[0].status).toBe('pending');
     });
   });
 });

@@ -30,6 +30,7 @@ export interface OnboardingStep {
 export type {
   MiewIDModelStatus,
   MiewIDModelRecord,
+  ModelFormat,
   EmbeddingPackManifest,
   DetectorConfig,
   EmbeddingPack,

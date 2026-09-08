@@ -39,19 +39,33 @@ jest.mock('../../../src/components/AnimatedListItem', () => ({
   },
 }));
 
-// Mock package.json
-jest.mock('../../../package.json', () => ({ version: '1.0.0' }), {
-  virtual: true,
-});
-
 const mockSetOnboardingComplete = jest.fn();
 const mockSetThemeMode = jest.fn();
+const mockSetPreferGpuModel = jest.fn();
+let mockPreferGpuModel = false;
 jest.mock('../../../src/stores', () => ({
   useAppStore: jest.fn((selector?: any) => {
     const state = {
       setOnboardingComplete: mockSetOnboardingComplete,
       themeMode: 'system',
       setThemeMode: mockSetThemeMode,
+      preferGpuModel: mockPreferGpuModel,
+      setPreferGpuModel: mockSetPreferGpuModel,
+    };
+    return selector ? selector(state) : state;
+  }),
+  useWildlifeStore: jest.fn((selector?: any) => {
+    const state = {
+      miewidModel: {
+        version: '4.1.0',
+      },
+      packs: [
+        {
+          id: 'example-project',
+          displayName: 'Example Population',
+          packVersion: '2026-08-23T10:00:00Z',
+        },
+      ],
     };
     return selector ? selector(state) : state;
   }),
@@ -88,7 +102,9 @@ describe('SettingsScreen', () => {
 
   it('renders version number', () => {
     const { getByText } = render(<SettingsScreen />);
-    expect(getByText('1.0.0')).toBeTruthy();
+    expect(getByText('0.1.0-field.1 (1787551542)')).toBeTruthy();
+    expect(getByText('4.1.0')).toBeTruthy();
+    expect(getByText('2026-08-23T10:00:00Z')).toBeTruthy();
   });
 
   it('renders Security navigation item', () => {
@@ -112,14 +128,14 @@ describe('SettingsScreen', () => {
     const { getByText } = render(<SettingsScreen />);
     expect(getByText('Privacy First')).toBeTruthy();
     expect(
-      getByText(/All your data stays on this device/),
+      getByText(/captured and matched entirely on\s+this device/),
     ).toBeTruthy();
   });
 
   it('renders about section text', () => {
     const { getByText } = render(<SettingsScreen />);
-    expect(getByText('Version')).toBeTruthy();
-    expect(getByText(/WildMe brings wildlife/)).toBeTruthy();
+    expect(getByText('App version')).toBeTruthy();
+    expect(getByText(/EleBook helps identify elephants/)).toBeTruthy();
   });
 
   it('renders Reset Onboarding button in __DEV__ mode', () => {
@@ -138,5 +154,45 @@ describe('SettingsScreen', () => {
       routes: [{ name: 'Onboarding' }],
     });
     expect(mockDispatch).toHaveBeenCalled();
+  });
+
+  describe('GPU acceleration toggle', () => {
+    const { Platform } = require('react-native');
+    const originalPlatformOsDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+
+    afterEach(() => {
+      mockPreferGpuModel = false;
+      if (originalPlatformOsDescriptor) {
+        Object.defineProperty(Platform, 'OS', originalPlatformOsDescriptor);
+      }
+    });
+
+    it('shows the GPU acceleration toggle on Android', () => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+
+      const { getByTestId, getByText } = render(<SettingsScreen />);
+
+      expect(getByText('GPU acceleration')).toBeTruthy();
+      expect(getByTestId('gpu-acceleration-toggle')).toBeTruthy();
+    });
+
+    it('does not show the GPU acceleration toggle on iOS', () => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'ios' });
+
+      const { queryByTestId, queryByText } = render(<SettingsScreen />);
+
+      expect(queryByText('GPU acceleration')).toBeNull();
+      expect(queryByTestId('gpu-acceleration-toggle')).toBeNull();
+    });
+
+    it('calls setPreferGpuModel when the toggle is switched', () => {
+      Object.defineProperty(Platform, 'OS', { configurable: true, get: () => 'android' });
+      mockPreferGpuModel = false;
+
+      const { getByTestId } = render(<SettingsScreen />);
+      fireEvent(getByTestId('gpu-acceleration-toggle'), 'valueChange', true);
+
+      expect(mockSetPreferGpuModel).toHaveBeenCalledWith(true);
+    });
   });
 });

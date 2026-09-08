@@ -6,45 +6,86 @@ import type { DownloadOptions } from '../modelDownloadService';
 import { useWildlifeStore } from '../../stores/wildlifeStore';
 import logger from '../../utils/logger';
 
-export type EmbeddingModelCompatibility =
-  | 'compatible'
-  | 'minor-mismatch'
-  | 'incompatible';
+export type EmbeddingModelCompatibility = 'compatible' | 'incompatible';
 
 /**
- * Extract [major, minor] from a version string like "4.1.0", "v4.1", or "4".
- * Returns null when no leading numeric component can be found.
+ * Normalize a semantic model version while allowing an optional `v` prefix
+ * and an omitted patch component.
  */
-function parseMajorMinor(version: string): [number, number] | null {
-  const match = /^v?(\d+)(?:\.(\d+))?/.exec(version.trim());
+function normalizeModelVersion(version: string): string | null {
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?$/.exec(version.trim());
   if (!match) {
     return null;
   }
-  return [Number(match[1]), Number(match[2] ?? 0)];
+  return `${Number(match[1])}.${Number(match[2])}.${Number(match[3] ?? 0)}`;
 }
 
 /**
  * Gate a pack's embedding-model version against the installed MiewID model.
  *
- * Major mismatch → 'incompatible' (embeddings live in different spaces and
- * must never be matched against each other). Minor mismatch or an
- * unparseable/unknown version on either side → 'minor-mismatch' (warn but
- * proceed — legacy migrated records have version 'unknown' and must not be
- * bricked).
+ * Any semantic version mismatch, including a patch mismatch or an unknown
+ * legacy version, is incompatible. Matching across unverified embedding
+ * spaces can produce plausible but meaningless candidates.
  */
 export function checkEmbeddingModelCompatibility(
   modelVersion: string,
   packVersion: string,
 ): EmbeddingModelCompatibility {
-  const model = parseMajorMinor(modelVersion);
-  const pack = parseMajorMinor(packVersion);
+  const model = normalizeModelVersion(modelVersion);
+  const pack = normalizeModelVersion(packVersion);
   if (!model || !pack) {
-    return 'minor-mismatch';
-  }
-  if (model[0] !== pack[0]) {
     return 'incompatible';
   }
-  return model[1] === pack[1] ? 'compatible' : 'minor-mismatch';
+  return model === pack ? 'compatible' : 'incompatible';
+}
+
+const candidateRecord = (
+  source: ModelSource,
+  overrides: Partial<MiewIDModelRecord> = {},
+): MiewIDModelRecord => ({
+  path: '',
+  name: source.name,
+  version: source.version,
+  sha256: source.expectedSha256 || null,
+  sizeBytes: source.expectedSizeBytes ?? null,
+  status: 'downloading',
+  verifiedAt: null,
+  format: source.format,
+  ...overrides,
+});
+
+/** Download and verify a model candidate without changing the active model. */
+export async function prepareMiewidModel(
+  source: ModelSource,
+  opts: DownloadOptions = {},
+): Promise<MiewIDModelRecord> {
+  let outcome;
+  try {
+    outcome = await modelDownloadService.downloadModel(source, opts);
+  } catch (error) {
+    logger.error('[MiewIDModelManager] Model preparation threw:', error);
+    return candidateRecord(source, { status: 'missing' });
+  }
+
+  if (outcome.ok) {
+    return candidateRecord(source, {
+      path: outcome.path,
+      sha256: outcome.sha256,
+      sizeBytes: outcome.sizeBytes,
+      status: 'ready',
+      verifiedAt: new Date().toISOString(),
+    });
+  }
+  if (outcome.code === 'checksum-mismatch') {
+    logger.error(
+      `[MiewIDModelManager] Downloaded model failed verification: ${outcome.message}`,
+    );
+    return candidateRecord(source, { status: 'corrupt' });
+  }
+  logger.warn(
+    `[MiewIDModelManager] Model preparation failed (${outcome.code}): ${outcome.message}`,
+  );
+  return candidateRecord(source, { status: 'missing' });
 }
 
 /**
@@ -60,37 +101,10 @@ export async function acquireMiewidModel(
 ): Promise<MiewIDModelRecord> {
   const { setMiewidModel } = useWildlifeStore.getState();
 
-  const downloading: MiewIDModelRecord = {
-    path: '',
-    name: source.name,
-    version: source.version,
-    sha256: source.expectedSha256 || null,
-    sizeBytes: source.expectedSizeBytes ?? null,
-    status: 'downloading',
-    verifiedAt: null,
-  };
+  const downloading = candidateRecord(source);
   setMiewidModel(downloading);
 
-  const outcome = await modelDownloadService.downloadModel(source, opts);
-
-  let record: MiewIDModelRecord;
-  if (outcome.ok) {
-    record = {
-      ...downloading,
-      path: outcome.path,
-      sha256: outcome.sha256,
-      sizeBytes: outcome.sizeBytes,
-      status: 'ready',
-      verifiedAt: new Date().toISOString(),
-    };
-  } else if (outcome.code === 'checksum-mismatch') {
-    record = { ...downloading, status: 'corrupt' };
-    logger.error(`[MiewIDModelManager] Downloaded model failed verification: ${outcome.message}`);
-  } else {
-    record = { ...downloading, status: 'missing' };
-    logger.warn(`[MiewIDModelManager] Model acquisition failed (${outcome.code}): ${outcome.message}`);
-  }
-
+  const record = await prepareMiewidModel(source, opts);
   setMiewidModel(record);
   return record;
 }

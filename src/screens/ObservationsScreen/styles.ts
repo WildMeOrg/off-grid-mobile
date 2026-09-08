@@ -19,6 +19,22 @@ export const createStyles = (colors: ThemeColors, shadows: ThemeShadows) => ({
     ...TYPOGRAPHY.h2,
     color: colors.text,
   },
+  headerRow: {
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+  },
+  sortButton: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 4,
+  },
+  sortButtonText: {
+    ...TYPOGRAPHY.labelSmall,
+    color: colors.textSecondary,
+  },
   filterBar: {
     flexDirection: 'row' as const,
     paddingHorizontal: SPACING.lg,
@@ -74,6 +90,16 @@ export const createStyles = (colors: ThemeColors, shadows: ThemeShadows) => ({
   reviewStatus: {
     ...TYPOGRAPHY.meta,
     color: colors.textMuted,
+  },
+  statusRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: SPACING.xs,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   emptyState: {
     flex: 1,

@@ -1,8 +1,10 @@
-# Embedding Pack Format Specification
+# Embedding pack format specification
 
 **Version:** 1.0
 **Date:** 2026-02-25
-**Purpose:** Defines the file format for embedding packs exported from Wildbook and consumed by the Wildbook Mobile app for offline individual animal re-identification.
+**Purpose:** Defines the v1 file format for embedding packs consumed by EleBook for offline individual wildlife re-identification, including guidance for a Wildbook exporter.
+
+*Updated: 2026-09-07 - Aligned mobile acquisition, validation, and model compatibility with the current consumer.*
 
 ---
 
@@ -16,20 +18,22 @@ An **embedding pack** is a self-contained zip archive that enables offline re-id
 4. **Metadata** mapping embeddings to individual identities
 5. **Configuration** for the detector's preprocessing pipeline
 
-The pack is exported from Wildbook via an Encounter Search export action. A researcher runs a search (e.g., "all horse encounters at Ranch Alpha"), then exports the results as an embedding pack. The Wildbook exporter:
+The Wildbook exporter workflow below is a producer-side design, not an implemented mobile export or direct Wildbook sync feature. A researcher would run an Encounter Search for a synthetic scope such as `example-project`, then export the results as an embedding pack. Such an exporter would:
 
-1. Queries all Encounters matching the search criteria
-2. Groups them by Individual (Marked Individual)
-3. Runs MiewID on each Encounter's annotation to extract embeddings (or retrieves cached embeddings)
-4. Collects representative reference photos per individual
-5. Bundles the species-appropriate detector model
-6. Packages everything into the zip format described below
+1. Query all Encounters matching the search criteria
+2. Group them by Individual (Marked Individual)
+3. Run MiewID on each Encounter's annotation to extract embeddings (or retrieve cached embeddings)
+4. Collect representative reference photos per individual
+5. Bundle the species-appropriate detector model
+6. Package everything into the zip format described below
+
+EleBook currently resolves packs from the configured backend's `GET /projects/{project_id}/packs/latest` endpoint. It downloads the returned archive URL and installs a validated candidate. The shared embedding model is resolved separately through `GET /models/{model_name}/latest`; `wildbookInstanceUrl` and `huggingFaceRepo` do not select these download endpoints. See [setup](setup.md) and [API behavior](api.md) for deployment configuration and the mobile API contract.
 
 ---
 
-## File Structure
+## File structure
 
-```
+```text
 {species}-{context}-{date}.zip
 ├── manifest.json
 ├── models/
@@ -49,16 +53,17 @@ The pack is exported from Wildbook via an Encounter Search export action. A rese
     └── detector.json
 ```
 
-### Naming Convention
+### Naming convention
 
 The zip filename follows the pattern: `{species}-{context}-{YYYY-MM}.zip`
 
 Examples:
-- `horse-ranch-alpha-2026-03.zip`
-- `whale-shark-mozambique-2026-01.zip`
-- `giraffe-serengeti-north-2026-06.zip`
 
-The filename is informational only. The canonical species and context are in `manifest.json`.
+- `horse-example-project-2026-03.zip`
+- `whale-shark-example-project-2026-01.zip`
+- `giraffe-example-project-2026-06.zip`
+
+The filename is informational only. The manifest describes the species, feature class, and provenance; the download request supplies the project ID used to register the pack.
 
 ---
 
@@ -71,20 +76,20 @@ The top-level manifest describes the pack contents and provenance.
   "formatVersion": "1.0",
   "species": "horse",
   "featureClass": "horse+face",
-  "displayName": "Ranch Alpha Horses",
-  "description": "127 identified horses from Ranch Alpha, exported March 2026",
-  "wildbookInstanceUrl": "https://horses.wildbook.org",
+  "displayName": "Example project horses",
+  "description": "Two synthetic individuals for example-project",
+  "wildbookInstanceUrl": "https://wildbook.example.invalid",
   "wildbookVersion": "9.x.x",
   "exportDate": "2026-03-15T14:30:00Z",
-  "exportedBy": "researcher@example.com",
-  "searchQuery": "locationId=ranch-alpha AND species=horse",
-  "individualCount": 127,
-  "embeddingCount": 635,
+  "exportedBy": "researcher@example.invalid",
+  "searchQuery": "projectId=example-project AND species=horse",
+  "individualCount": 2,
+  "embeddingCount": 8,
   "embeddingDim": 2152,
   "embeddingModel": {
     "name": "miewid-v4",
-    "version": "4.0.0",
-    "huggingFaceRepo": "conservationxlabs/miewid-msv4",
+    "version": "4.1.0",
+    "huggingFaceRepo": "example-project/miewid",
     "inputSize": [440, 440],
     "normalize": {
       "mean": [0.485, 0.456, 0.406],
@@ -96,13 +101,15 @@ The top-level manifest describes the pack contents and provenance.
     "configFile": "config/detector.json"
   },
   "checksums": {
-    "embeddings.bin": "sha256:abc123...",
-    "horse-face-yolo11n.onnx": "sha256:def456..."
+    "embeddings.bin": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "horse-face-yolo11n.onnx": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   }
 }
 ```
 
-### Field Reference
+All identities and provenance values in these examples are synthetic. Replace the illustrative checksum values with hashes of the actual files before producing a pack.
+
+### Field reference
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -110,51 +117,67 @@ The top-level manifest describes the pack contents and provenance.
 | `species` | string | Yes | Species common name, lowercase. Must match Wildbook's species taxonomy key. |
 | `featureClass` | string | Yes | The annotation feature class in Wildbook's IA pipeline (e.g., `"horse+face"`, `"whale_shark+left"`, `"giraffe+flank"`). This determines which detector model to use and which body region the embeddings represent. Follows Wildbook's `{species}+{viewpoint}` convention. |
 | `displayName` | string | Yes | Human-readable name shown in the mobile app's pack selector. |
-| `description` | string | No | Optional description shown in pack details. |
-| `wildbookInstanceUrl` | string | Yes | Base URL of the Wildbook instance this pack was exported from. Used for sync (uploading new Encounters back to this instance). |
+| `description` | string | No | Optional exporter description. Not copied into the current installed pack record. |
+| `wildbookInstanceUrl` | string | Yes | Source-instance provenance. The current mobile upload target is the configured EleBook backend, not this URL. |
 | `wildbookVersion` | string | No | Version of the Wildbook instance at export time. Informational. |
-| `exportDate` | string (ISO 8601) | Yes | When this pack was exported. Used for freshness checks and update prompts. |
+| `exportDate` | string (ISO 8601) | Yes | When this pack was exported. Retained as provenance; the backend download flow checks artifact version and hash for updates. |
 | `exportedBy` | string | No | Email or username of the researcher who exported the pack. |
 | `searchQuery` | string | No | The Encounter Search query that produced this pack. Informational, helps researchers understand scope. |
 | `individualCount` | integer | Yes | Number of distinct individuals in the pack. |
 | `embeddingCount` | integer | Yes | Total number of embedding vectors in `embeddings.bin`. This is >= `individualCount` because each individual may have multiple embeddings from different Encounters/photos. |
-| `embeddingDim` | integer | Yes | Dimensionality of each embedding vector. MiewID v4 produces 2152-dimensional vectors. |
+| `embeddingDim` | integer | Yes | Dimensionality of each embedding vector. The current MiewID v4.1 contract uses raw 2152-dimensional BatchNorm output. |
 | `embeddingModel` | object | Yes | Describes the embedding model used. See sub-fields below. |
 | `embeddingModel.name` | string | Yes | Model identifier (e.g., `"miewid-v4"`). |
-| `embeddingModel.version` | string | Yes | Exact model version. The mobile app warns if its loaded MiewID version doesn't match. |
-| `embeddingModel.huggingFaceRepo` | string | No | HuggingFace repository for the model. Used by the mobile app to download MiewID if not already present. |
+| `embeddingModel.version` | string | Yes | Model version. Installation and inference require the same normalized semantic version as the installed model; mismatches are incompatible. |
+| `embeddingModel.huggingFaceRepo` | string | No | Optional model provenance. The current mobile resolver does not download from this field. |
 | `embeddingModel.inputSize` | [int, int] | Yes | Expected input dimensions [height, width] in pixels. MiewID expects [440, 440]. |
 | `embeddingModel.normalize` | object | Yes | ImageNet normalization parameters. `mean` and `std` are arrays of 3 floats (RGB channels). |
 | `detectorModel` | object | Yes | Describes the bundled detector model. See sub-fields below. |
 | `detectorModel.filename` | string | Yes | Filename of the ONNX detector model in the `models/` directory. |
 | `detectorModel.configFile` | string | Yes | Relative path to the detector configuration file. |
-| `checksums` | object | No | SHA-256 checksums for critical files. Keys are filenames, values are `"sha256:{hex}"`. The mobile app verifies these after download to detect corruption. |
+| `checksums` | object | No | SHA-256 checksums for listed files. Keys may be bare filenames or pack-relative paths such as `embeddings/embeddings.bin`. Values may be hex or `sha256:{hex}` (case-insensitive). Only declared entries are verified during a full pack validation. |
+
+### Mobile validation
+
+The required fields above describe the v1 producer contract, not a complete runtime schema. The current validator checks core manifest structure, supported format major version, required file presence, binary byte length, and individual embedding ranges. It does not exhaustively validate provenance fields, detector configuration, reference-photo requirements, or agreement between the declared individual count and the index.
+
+Bare file references are searched in the pack root, then `embeddings/`, `models/`, and `config/`. Nested relative paths are allowed, but absolute paths, dot segments, empty segments, backslashes, URI/drive syntax, percent escapes, query/fragment characters, control characters, and leading/trailing segment whitespace are rejected. Individual IDs must be single safe directory names; reference-photo names follow the same relative-path rules. These checks also run when checksum hashing is skipped.
+
+The manifest, required files, checksum targets, and displayed reference photos must resolve canonically inside the pack directory. Missing canonical-path information and symlinks resolving outside it are rejected. The version-pinned `react-native-fs` patch supplies canonical paths on Android and iOS. Activation has no unchecked path fallback, and installed indexes are checked again before returning individual/photo references.
+
+The application uses its native unzip library before validating extracted contents; it does not implement a separate archive-entry preflight. These read/activation checks are not an archive signature, a defense against a compromised operating system, or a guarantee against concurrent filesystem tampering. Use trusted pack producers and maintain the native extraction libraries.
+
+Manifest checksums are optional and cover only the entries supplied. Startup reconciliation skips hashing for packs with a previous validation timestamp, while retaining file, size, and range checks. The backend download flow separately requires an archive `sha256` of 64 hex characters without the `sha256:` prefix and passes the expected byte size to the downloader. Archive integrity is checked before extraction. These hashes are not publisher signatures.
 
 ---
 
-## models/ Directory
+## models/ directory
 
 Contains the species-specific detector model in ONNX format.
 
-### Detector Model Requirements
+### Detector model requirements
 
 - **Format:** ONNX (Open Neural Network Exchange)
-- **Compatibility:** Must be compatible with ONNX Runtime 1.x (opset version 11+)
-- **Quantization:** FP16 recommended for mobile. INT8 acceptable if accuracy is validated.
-- **Typical size:** 5-30 MB depending on architecture
+- **Input:** The mobile path supplies a float32 tensor shaped `[1, 3, height, width]`.
+- **Compatibility:** Verify the exported artifact's operators, input type, and output layout with the app's ONNX runtime. An opset number alone does not establish compatibility.
+- **Quantization:** Weight precision may vary, but the model must accept the supplied float32 input. Float16 or integer input tensors require a different input path.
+- **Illustrative size:** 5-30 MB depending on architecture and export; use artifact metadata for the actual size.
 
-The detector model is specific to a species and feature class. For example:
-- `horse-face-yolo11n.onnx` — detects horse faces
-- `whale-shark-yolov8s.onnx` — detects whale sharks (full body)
-- `giraffe-flank-efficientdet.onnx` — detects giraffe flanks
+The detector model is specific to a species and feature class. Exporter naming examples (not a list of implemented decoders):
 
-**Important:** MiewID (the embedding model) is NOT included in the pack. It is a shared model downloaded separately by the mobile app, since the same MiewID model works across all species. The pack only references which MiewID version its embeddings were generated with (in `manifest.json`).
+- `horse-face-yolo11n.onnx` - detects horse faces
+- `whale-shark-yolov8s.onnx` - detects whale sharks (full body)
+- `giraffe-flank-efficientdet.onnx` - detects giraffe flanks
+
+**Important:** MiewID (the embedding model) is not included in the pack. It is downloaded separately from the configured backend's model endpoint; model weights are not committed in this repository. The pack references the MiewID version used to generate its embeddings. Detector artifacts remain ONNX even when an Android installation uses a TFLite embedding model.
+
+Detection runs on ONNX CPU. Embeddings use ONNX CPU or the optional Android TFLite/LiteRT path, which can use GPU acceleration. Runtime failures are surfaced to the pipeline; the embedding service does not automatically download or retry an alternative ONNX artifact when LiteRT fails.
 
 ---
 
 ## config/detector.json
 
-Describes how to preprocess images and interpret outputs for the bundled detector model. This makes the mobile app's inference pipeline model-agnostic.
+Describes preprocessing and output metadata for the bundled detector model. The current mobile path supports the YOLOv8/YOLO11-style single-output layout described below; configuration fields do not make arbitrary detector architectures supported.
 
 ```json
 {
@@ -174,58 +197,56 @@ Describes how to preprocess images and interpret outputs for the bundled detecto
   "outputFormat": "yolo",
   "classLabels": ["horse_face"],
   "outputSpec": {
-    "boxFormat": "xyxy",
-    "coordinateType": "normalized",
+    "boxFormat": "cxcywh",
+    "coordinateType": "absolute",
     "outputTensorName": "output0",
-    "layout": "batch_detections_attributes"
+    "layout": "batch_attributes_detections"
   }
 }
 ```
 
-### Field Reference
+### Field reference
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `modelFile` | string | Yes | Filename of the ONNX model in `models/`. Must match `manifest.json`. |
-| `architecture` | string | Yes | Detector architecture family: `"yolo11"`, `"yolov8"`, `"efficientdet"`, `"ssd"`, etc. The mobile app may use this to select the correct post-processing path. |
-| `inputSize` | [int, int] | Yes | Model input dimensions [height, width]. The mobile app resizes the captured photo to this size before inference. |
+| `architecture` | string | Yes | Descriptive detector family, e.g. `"yolo11"` or `"yolov8"`. The current mobile path does not select a decoder from this field. |
+| `inputSize` | [int, int] | Yes | Model input dimensions [height, width]. The current preprocessing contract stretch-resizes the full image, without letterboxing. |
 | `inputChannels` | integer | Yes | Number of input channels. Always `3` (RGB). |
 | `channelOrder` | string | Yes | `"RGB"` or `"BGR"`. The mobile app reorders channels if needed. |
 | `normalize.mean` | [float, float, float] | Yes | Per-channel mean subtraction values. YOLO models typically use `[0, 0, 0]`. |
 | `normalize.std` | [float, float, float] | Yes | Per-channel standard deviation divisors. YOLO models typically use `[1, 1, 1]`. |
 | `normalize.scale` | float | Yes | Pixel value scaling factor applied BEFORE mean/std normalization. `1/255 = 0.00392156862` converts uint8 [0-255] to float [0-1]. Set to `1.0` if the model expects [0-255] input. |
 | `confidenceThreshold` | float | Yes | Minimum detection confidence score [0-1]. Detections below this are discarded. |
-| `nmsThreshold` | float | Yes | IoU threshold for non-max suppression [0-1]. Overlapping boxes above this IoU are merged. |
-| `maxDetections` | integer | Yes | Maximum number of detections to return per image. Prevents memory issues on dense scenes. |
-| `outputFormat` | string | Yes | Output post-processing family: `"yolo"`, `"ssd"`, `"efficientdet"`. Determines how to parse the model's output tensor(s). |
+| `nmsThreshold` | float | Yes | IoU threshold for non-max suppression [0-1]. Lower-scoring overlapping boxes are suppressed, not merged; suppression is across class labels. |
+| `maxDetections` | integer | Yes | Maximum number of detections returned after NMS; not a limit on the model's output allocation. |
+| `outputFormat` | string | Yes | Intended output family. Use `"yolo"` for the implemented path. Values such as `"ssd"` or `"efficientdet"` do not activate another decoder. |
 | `classLabels` | [string] | Yes | Ordered list of class label strings. Index position corresponds to class ID in the model output. Single-class detectors have one entry. |
 | `outputSpec` | object | Yes | Describes the output tensor layout. See sub-fields below. |
-| `outputSpec.boxFormat` | string | Yes | Bounding box coordinate format: `"xyxy"` (x1,y1,x2,y2), `"xywh"` (center_x, center_y, width, height), or `"cxcywh"`. |
+| `outputSpec.boxFormat` | string | Yes | `"xyxy"` means (x1, y1, x2, y2); `"xywh"` means (top-left x, top-left y, width, height); `"cxcywh"` means (center x, center y, width, height). |
 | `outputSpec.coordinateType` | string | Yes | `"normalized"` (0-1 relative to input size) or `"absolute"` (pixel coordinates). |
 | `outputSpec.outputTensorName` | string | No | Name of the output tensor to read. If omitted, uses the first output tensor. |
-| `outputSpec.layout` | string | Yes | Tensor dimension layout: `"batch_detections_attributes"` means shape [B, N, 5+C] where N=detections, 5=box coords+confidence, C=class scores. |
+| `outputSpec.layout` | string | Yes | Descriptive layout metadata. The current parser assumes `[1, 4+C, N]` (`"batch_attributes_detections"`), where C is the number of class labels and N is the number of detections. It does not dispatch on this string or accept an extra objectness row. |
 
-### Post-Processing by Architecture
+### Post-processing by architecture
 
-The mobile app implements post-processing per `architecture` value:
+The mobile runtime always calls its YOLO parser, regardless of `architecture`, `outputFormat`, or `outputSpec.layout`.
 
-**`yolo11` / `yolov8`:**
-1. Output tensor shape: [1, 5+num_classes, num_detections] (transposed from typical YOLO)
-2. Transpose to [1, num_detections, 5+num_classes]
-3. Extract box coordinates (first 4 values per detection) in `boxFormat`
-4. Extract confidence (5th value) and class scores (remaining values)
-5. Apply confidence threshold
-6. Apply NMS with `nmsThreshold`
-7. Map class indices to `classLabels`
+**Implemented `yolo11` / `yolov8` layout:**
 
-**`efficientdet` / `ssd`:**
-1. Multiple output tensors: boxes [1, N, 4], scores [1, N, C], (optional) num_detections [1]
-2. Extract boxes and scores from respective tensors
-3. Apply confidence threshold and NMS
+1. Read row-major output `[1, 4+C, N]`: four coordinate rows followed by one confidence row per class, with no separate objectness value.
+2. For each detection, select the highest class confidence and apply `confidenceThreshold`.
+3. Convert coordinates using `boxFormat` and `coordinateType`; normalize to original-image fractions under the stretch-resize contract.
+4. Clamp box corners to the image bounds and discard invalid or empty boxes.
+5. Sort by confidence, apply class-agnostic NMS, and return at most `maxDetections`, mapping class indices through `classLabels`.
+
+**Exporter designs for `efficientdet` / `ssd`:**
+
+These families may expose boxes `[1, N, 4]`, scores `[1, N, C]`, and optional detection counts as separate tensors. Extracting these outputs and applying thresholding/NMS would require another mobile decoder; that path is not implemented here.
 
 ---
 
-## embeddings/ Directory
+## embeddings/ directory
 
 Contains the pre-computed MiewID embedding vectors and their metadata.
 
@@ -239,9 +260,9 @@ Maps individuals to their embedding vectors and reference photos.
   "generatedWith": "miewid-v4",
   "individuals": [
     {
-      "id": "WB-HORSE-001",
-      "name": "Butterscotch",
-      "alternateId": "RANCH-A-042",
+      "id": "SYNTHETIC-001",
+      "name": "Example individual 1",
+      "alternateId": "EXAMPLE-001",
       "sex": "female",
       "lifeStage": "adult",
       "firstSeen": "2024-06-15",
@@ -253,8 +274,8 @@ Maps individuals to their embedding vectors and reference photos.
       "notes": "Distinctive white blaze on forehead"
     },
     {
-      "id": "WB-HORSE-002",
-      "name": "Thunder",
+      "id": "SYNTHETIC-002",
+      "name": "Example individual 2",
       "alternateId": null,
       "sex": "male",
       "lifeStage": "adult",
@@ -270,11 +291,11 @@ Maps individuals to their embedding vectors and reference photos.
 }
 ```
 
-### Individual Field Reference
+### Individual field reference
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `id` | string | Yes | Wildbook's unique individual identifier (`MarkedIndividual.individualID`). Used as the foreign key when syncing Encounters back to Wildbook. |
+| `id` | string | Yes | Stable source individual identifier, such as Wildbook's `MarkedIndividual.individualID`. Used for local matching and submitted as the chosen identity to the configured backend; this does not imply direct Wildbook sync. |
 | `name` | string | No | Display name for the individual. May be null for unnamed animals. |
 | `alternateId` | string | No | Alternative identifier (e.g., researcher's field ID, tattoo number, band number). |
 | `sex` | string | No | `"male"`, `"female"`, `"unknown"`, or null. From Wildbook's individual record. |
@@ -287,29 +308,31 @@ Maps individuals to their embedding vectors and reference photos.
 | `referencePhotos` | [string] | Yes | Filenames of reference photos in `reference_photos/{id}/`. Ordered by quality/representativeness (best first). At least 1 required. |
 | `notes` | string | No | Free-form notes about distinguishing features. Shown to the user during match review. |
 
-### embeddings.bin Format
+### embeddings.bin format
 
 A flat binary file containing all embedding vectors packed sequentially as **little-endian float32** values.
 
 **Layout:**
-```
+```text
 [vector_0: 2152 x float32][vector_1: 2152 x float32]...[vector_N: 2152 x float32]
 ```
 
 **Reading a specific individual's embeddings:**
-```
+```text
 byte_offset = individual.embeddingOffset * embeddingDim * 4
 byte_length = individual.embeddingCount * embeddingDim * 4
 ```
 
-For MiewID v4 with `embeddingDim = 2152`:
+For MiewID v4.1 with `embeddingDim = 2152`:
 - Each vector: 2152 * 4 = 8,608 bytes
-- 635 total vectors: 635 * 8,608 = 5,466,080 bytes (~5.2 MB)
+- The eight-vector example above: 8 * 8,608 = 68,864 bytes
+- A larger pack with 635 vectors: 635 * 8,608 = 5,466,080 bytes (~5.2 MB)
+
+Store the raw BatchNorm embeddings without L2 normalization. Matching uses full cosine similarity, dividing the dot product by both vector norms. A top similarity score is not a calibrated identity probability or a scientifically confirmed identity.
 
 **Why flat binary instead of JSON/numpy:**
-- Zero parsing overhead — memory-map the file and read vectors directly
-- No serialization/deserialization cost on mobile
-- Compact — no key names, no formatting characters
+- No per-number JSON parsing; vectors can be read from fixed offsets
+- Compact - no key names or formatting characters
 - Compatible with typed arrays in JavaScript (`Float32Array`) and native buffers
 
 **Endianness:** Little-endian (matches ARM and x86 architectures used by iOS and Android).
@@ -318,22 +341,22 @@ For MiewID v4 with `embeddingDim = 2152`:
 
 ---
 
-## reference_photos/ Directory
+## reference_photos/ directory
 
 Contains representative photographs of each known individual, organized by individual ID.
 
-```
+```text
 reference_photos/
-├── WB-HORSE-001/
+├── SYNTHETIC-001/
 │   ├── ref_01.jpg      ← best/most representative
 │   ├── ref_02.jpg
 │   └── ref_03.jpg
-├── WB-HORSE-002/
+├── SYNTHETIC-002/
 │   └── ref_01.jpg
 └── ...
 ```
 
-### Photo Requirements
+### Photo requirements
 
 | Property | Requirement | Rationale |
 |---|---|---|
@@ -344,7 +367,7 @@ reference_photos/
 | **Content** | Cropped to the annotation region (same crop the detector would produce) | Shows exactly what the detector will crop, making visual comparison meaningful |
 | **Naming** | `ref_01.jpg`, `ref_02.jpg`, etc. | Simple sequential naming, referenced by `index.json` |
 
-### Selection Criteria for Wildbook Exporter
+### Selection criteria for a Wildbook exporter
 
 When selecting reference photos from an individual's Encounters, the exporter should prefer:
 
@@ -360,17 +383,17 @@ The exporter should avoid:
 
 ---
 
-## Wildbook Exporter Implementation Guide
+## Wildbook exporter implementation guide
 
-This section provides guidance for implementing the embedding pack export as an Encounter Search export format in Wildbook.
+This section preserves producer-side guidance for implementing an Encounter Search export in Wildbook. It is not a description of server code in this repository or endpoints currently called by EleBook.
 
-### Export Trigger
+### Export trigger
 
 The export is triggered from Wildbook's Encounter Search results page. After a researcher runs a search, they select "Export as Embedding Pack" from the export options. This is analogous to existing export formats (Excel, GIS, email).
 
-### Exporter Workflow
+### Exporter workflow
 
-```
+```text
 1. GATHER ENCOUNTERS
    ├── Execute the Encounter Search query
    ├── Filter to Encounters that have:
@@ -412,7 +435,7 @@ The export is triggered from Wildbook's Encounter Search results page. After a r
 6. CREATE MANIFEST
    ├── Populate manifest.json with all metadata
    ├── Include the search query for provenance
-   ├── Include the Wildbook instance URL for sync
+  ├── Include the Wildbook instance URL for provenance
    └── Record the MiewID version used for embeddings
 
 7. PACKAGE
@@ -421,7 +444,7 @@ The export is triggered from Wildbook's Encounter Search results page. After a r
    └── Serve for download or push to a staging URL
 ```
 
-### Wildbook Data Model Mapping
+### Wildbook data model mapping
 
 | Pack Field | Wildbook Source |
 |---|---|
@@ -438,7 +461,7 @@ The export is triggered from Wildbook's Encounter Search results page. After a r
 | `manifest.wildbookInstanceUrl` | Server's configured public URL |
 | `manifest.searchQuery` | The `SearchQuery` object serialized as a filter string |
 
-### Embedding Caching in Wildbook
+### Embedding caching in Wildbook
 
 To avoid re-running MiewID inference on every export, Wildbook should cache embeddings:
 
@@ -451,7 +474,7 @@ To avoid re-running MiewID inference on every export, Wildbook should cache embe
   ALTER TABLE annotation ADD COLUMN miewid_computed_at TIMESTAMP;
   ```
 
-### Detector Model Management
+### Detector model management
 
 Detector models are server-side assets managed by Wildbook administrators:
 
@@ -460,9 +483,9 @@ Detector models are server-side assets managed by Wildbook administrators:
 - When a new detector version is available, packs exported with the old version should prompt users to re-download
 - **Storage suggestion:** A `detector_models` table mapping `iaClass` to model file path, config JSON, and version string
 
-### API Endpoint Suggestion
+### API endpoint suggestion
 
-```
+```text
 POST /api/v1/embedding-packs/export
 Content-Type: application/json
 
@@ -484,9 +507,9 @@ Response:
 }
 ```
 
-Pack generation is asynchronous because it may involve running MiewID inference on uncached annotations. The mobile app polls the status endpoint, then downloads the completed pack.
+In this proposed exporter API, generation would be asynchronous because it may require inference on uncached annotations. An export client would poll the status endpoint before downloading. EleBook currently requests the latest published pack from its configured backend and does not implement this export/poll workflow.
 
-```
+```text
 GET /api/v1/embedding-packs/{packId}/status
 
 Response (in progress):
@@ -498,59 +521,61 @@ Response (complete):
 { "status": "ready", "downloadUrl": "/api/v1/embedding-packs/{packId}/download", "size": 36421632 }
 ```
 
-```
+```text
 GET /api/v1/embedding-packs/{packId}/download
 
 Response:
 200 OK
 Content-Type: application/zip
-Content-Disposition: attachment; filename="horse-ranch-alpha-2026-03.zip"
+Content-Disposition: attachment; filename="horse-example-project-2026-03.zip"
 [binary zip data]
 ```
 
-### Pack Updates
+### Pack updates
 
 When a researcher wants an updated pack (new individuals identified, better photos available):
 
 1. Re-run the same Encounter Search
-2. Export a new pack — it replaces the old one on the device
-3. The mobile app compares `exportDate` to detect freshness
-4. Future enhancement: incremental/delta packs that only ship new or changed individuals
+2. Export a new archive and publish it through the configured backend
+3. EleBook checks the published version and archive hash when checking for updates
+4. Download and validate a candidate before activating it with a compatible embedding model
+
+The current download flow keeps one active pack per project in the store. Prior version directories remain on disk; activating a new pack is not a deletion of all older pack data. Incremental/delta packs are outside the implemented acquisition flow.
 
 ---
 
-## Size Estimates
+## Size estimates
 
 | Component | Per Individual | 127 Individuals | 500 Individuals |
 |---|---|---|---|
 | Embeddings (5 vectors avg, float32) | 43 KB | 5.3 MB | 21 MB |
 | Reference photos (2 photos avg, 50 KB each) | 100 KB | 12.4 MB | 49 MB |
 | Individual metadata (index.json) | ~0.3 KB | 38 KB | 150 KB |
-| Detector model (ONNX, FP16) | — | 15-30 MB | 15-30 MB |
-| Manifest + config | — | ~2 KB | ~2 KB |
-| **Total (uncompressed)** | — | **~35-48 MB** | **~85-100 MB** |
-| **Total (zip compressed, est.)** | — | **~25-35 MB** | **~65-80 MB** |
+| Detector model (ONNX, FP16) | N/A | 15-30 MB | 15-30 MB |
+| Manifest + config | N/A | ~2 KB | ~2 KB |
+| **Total (uncompressed)** | N/A | **~35-48 MB** | **~85-100 MB** |
+| **Total (zip compressed, est.)** | N/A | **~25-35 MB** | **~65-80 MB** |
 
-MiewID model (downloaded separately): ~100 MB (FP16 ONNX)
+These are illustrative sizing estimates, not installed-artifact guarantees. The separately downloaded MiewID model's size and format come from backend artifact metadata.
 
 ---
 
-## Versioning & Compatibility
+## Versioning and compatibility
 
-### Format Versioning
+### Format versioning
 
-The `formatVersion` field in `manifest.json` follows semantic versioning:
+The v1 format permits optional additions within major version 1. The current validator reads the numeric component before the first `.`; it does not perform full semantic-version syntax validation:
 
-- **1.x** — Mobile app reads all 1.x packs. Minor versions add optional fields.
-- **2.0** — Breaking change. Mobile app must be updated to read v2 packs.
+- **1.x** - Accepted subject to the remaining pack checks.
+- **2.0** - Rejected by the current consumer; support requires a consumer update.
 
-### MiewID Version Compatibility
+### MiewID version compatibility
 
-The mobile app downloads MiewID separately. If the loaded MiewID version doesn't match `embeddingModel.version` in the pack manifest:
+The mobile app downloads MiewID separately and requires an exact normalized version match with `embeddingModel.version`. Normalization permits a leading `v` and an omitted patch component (`v4.1` and `4.1.0` are equivalent).
 
-- **Minor version mismatch** (e.g., loaded v4.0.1, pack says v4.0.0): Warn but allow. Embedding spaces should be compatible.
-- **Major version mismatch** (e.g., loaded v4, pack says v3): Block. Different major versions may have incompatible embedding spaces. Prompt user to download the correct MiewID version or re-export the pack.
+- Any major, minor, or patch mismatch is incompatible, as is an unrecognized version such as `legacy-unknown`.
+- Matching dimensions alone do not establish compatible embedding spaces. Re-export with the installed model version or install the version required by the pack.
 
-### Pack Staleness
+### Pack staleness
 
-The mobile app shows the pack's `exportDate` and warns if the pack is older than a configurable threshold (e.g., 90 days). Stale packs may be missing newly identified individuals.
+`exportDate` records provenance. Acquisition freshness is based on the backend's latest artifact version and SHA-256, not a configurable age threshold. Even a current published pack may be missing recently identified individuals.

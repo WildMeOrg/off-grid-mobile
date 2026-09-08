@@ -15,6 +15,8 @@ export type RootStackParamList = {
   Settings: undefined;
   SecuritySettings: undefined;
   PassphraseSetup: undefined;
+  SignIn: undefined;
+  SelectRole: undefined;
 };
 
 export type MainTabParamList = {

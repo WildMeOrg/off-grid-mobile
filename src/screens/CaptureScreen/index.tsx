@@ -9,7 +9,7 @@ import { useCaptureFlow } from './useCaptureFlow';
 export const CaptureScreen: React.FC = () => {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const { isProcessing, takePhoto, chooseFromGallery } = useCaptureFlow();
+  const { isProcessing, batchProgress, takePhoto, chooseFromGallery } = useCaptureFlow();
 
   return (
     <SafeAreaView
@@ -21,7 +21,11 @@ export const CaptureScreen: React.FC = () => {
         {isProcessing ? (
           <View style={styles.processingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.processingText}>Processing...</Text>
+            <Text style={styles.processingText}>
+              {batchProgress
+                ? `Processing ${batchProgress.current} of ${batchProgress.total}...`
+                : 'Processing...'}
+            </Text>
           </View>
         ) : (
           <>

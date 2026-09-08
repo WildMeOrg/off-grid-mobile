@@ -6,15 +6,19 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Feather';
 import { AnimatedListItem } from '../../components';
 import { Card } from '../../components';
-import { useThemedStyles } from '../../theme/useThemedStyles';
+import { useThemedStyles, useTheme } from '../../theme';
 import { useWildlifeStore } from '../../stores/wildlifeStore';
 import type { RootStackParamList } from '../../navigation/types';
 import type { Observation, SyncQueueItem } from '../../types/wildlife';
+import { toDisplayUri } from '../../utils/imageUri';
+import { getObservationStatusPresentation } from '../../services/observationStatus';
+import { getObservationStatusColor } from '../../utils/observationStatusColors';
 import { createStyles } from './styles';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 type FilterKey = 'all' | 'pending' | 'reviewed' | 'synced';
+type SortOrder = 'newest' | 'oldest';
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -41,32 +45,16 @@ function getDetectionCountText(count: number): string {
   return `${count} detections`;
 }
 
-function getReviewStatusText(observation: Observation): string {
-  const total = observation.detections.length;
-  if (total === 0) {
-    return 'No detections';
-  }
-  const reviewed = observation.detections.filter(
-    (d) => d.matchResult.reviewStatus !== 'pending',
-  ).length;
-  if (reviewed === total) {
-    return 'All reviewed';
-  }
-  return `${reviewed}/${total} reviewed`;
-}
-
 function isPendingReview(observation: Observation): boolean {
   return observation.detections.some(
-    (d) => d.matchResult.reviewStatus === 'pending',
+    d => d.matchResult.reviewStatus === 'pending',
   );
 }
 
 function isAllReviewed(observation: Observation): boolean {
   return (
     observation.detections.length > 0 &&
-    observation.detections.every(
-      (d) => d.matchResult.reviewStatus !== 'pending',
-    )
+    observation.detections.every(d => d.matchResult.reviewStatus !== 'pending')
   );
 }
 
@@ -74,7 +62,7 @@ function isSynced(
   observation: Observation,
   syncQueue: SyncQueueItem[],
 ): boolean {
-  const item = syncQueue.find((s) => s.observationId === observation.id);
+  const item = syncQueue.find(s => s.observationId === observation.id);
   return item?.status === 'synced';
 }
 
@@ -89,24 +77,38 @@ function filterObservations(
     case 'reviewed':
       return observations.filter(isAllReviewed);
     case 'synced':
-      return observations.filter((obs) => isSynced(obs, syncQueue));
+      return observations.filter(obs => isSynced(obs, syncQueue));
     default:
       return observations;
   }
 }
 
+/** Sorts by capture time -- the same field the row displays via formatTimestamp. */
+function sortObservations(observations: Observation[], order: SortOrder): Observation[] {
+  const direction = order === 'newest' ? -1 : 1;
+  return [...observations].sort(
+    (a, b) => direction * (new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+  );
+}
+
 export const ObservationsScreen: React.FC = () => {
   const styles = useThemedStyles(createStyles);
+  const { colors } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
 
-  const observations = useWildlifeStore((s) => s.observations);
-  const syncQueue = useWildlifeStore((s) => s.syncQueue);
+  const observations = useWildlifeStore(s => s.observations);
+  const syncQueue = useWildlifeStore(s => s.syncQueue);
 
   const filtered = useMemo(
-    () => filterObservations(observations, syncQueue, activeFilter),
-    [observations, syncQueue, activeFilter],
+    () => sortObservations(filterObservations(observations, syncQueue, activeFilter), sortOrder),
+    [observations, syncQueue, activeFilter, sortOrder],
   );
+
+  const toggleSortOrder = useCallback(() => {
+    setSortOrder(order => (order === 'newest' ? 'oldest' : 'newest'));
+  }, []);
 
   const handleObservationPress = useCallback(
     (observationId: string) => {
@@ -116,48 +118,87 @@ export const ObservationsScreen: React.FC = () => {
   );
 
   const renderObservation = useCallback(
-    ({ item, index }: { item: Observation; index: number }) => (
-      <AnimatedListItem
-        index={index}
-        onPress={() => handleObservationPress(item.id)}
-        testID={`observation-card-${index}`}
-      >
-        <Card>
-          <View style={styles.row}>
-            <Image
-              source={{ uri: item.photoUri }}
-              style={styles.thumbnail}
-              testID={`observation-thumbnail-${index}`}
-            />
-            <View style={styles.rowContent}>
-              <Text style={styles.timestamp}>
-                {formatTimestamp(item.timestamp)}
-              </Text>
-              <Text style={styles.detectionCount}>
-                {getDetectionCountText(item.detections.length)}
-              </Text>
-              <Text style={styles.reviewStatus}>
-                {getReviewStatusText(item)}
-              </Text>
+    ({ item, index }: { item: Observation; index: number }) => {
+      const syncItem = syncQueue.find(s => s.observationId === item.id);
+      const presentation = getObservationStatusPresentation(item, syncItem);
+      const statusColor = getObservationStatusColor(colors, presentation.severity);
+
+      return (
+        <AnimatedListItem
+          index={index}
+          onPress={() => handleObservationPress(item.id)}
+          testID={`observation-card-${index}`}
+        >
+          <Card>
+            <View style={styles.row}>
+              <Image
+                source={{ uri: toDisplayUri(item.photoUri) }}
+                style={styles.thumbnail}
+                testID={`observation-thumbnail-${index}`}
+              />
+              <View style={styles.rowContent}>
+                <Text style={styles.timestamp}>
+                  {formatTimestamp(item.timestamp)}
+                </Text>
+                <Text style={styles.detectionCount}>
+                  {getDetectionCountText(item.detections.length)}
+                </Text>
+                <View style={styles.statusRow}>
+                  <View
+                    style={[styles.statusDot, { backgroundColor: statusColor }]}
+                    testID={`observation-status-dot-${index}`}
+                  />
+                  <Text
+                    style={[styles.reviewStatus, { color: statusColor }]}
+                    testID={`observation-status-label-${index}`}
+                  >
+                    {presentation.label}
+                  </Text>
+                </View>
+              </View>
+              <Icon
+                name="chevron-right"
+                size={18}
+                color={styles.reviewStatus.color}
+              />
             </View>
-            <Icon name="chevron-right" size={18} color={styles.reviewStatus.color} />
-          </View>
-        </Card>
-      </AnimatedListItem>
-    ),
-    [handleObservationPress, styles],
+          </Card>
+        </AnimatedListItem>
+      );
+    },
+    [handleObservationPress, styles, syncQueue, colors],
   );
 
   const keyExtractor = useCallback((item: Observation) => item.id, []);
 
   return (
-    <SafeAreaView style={styles.container} testID="observations-screen" edges={['top']}>
+    <SafeAreaView
+      style={styles.container}
+      testID="observations-screen"
+      edges={['top']}
+    >
       <View style={styles.header}>
-        <Text style={styles.title}>Observations</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Observations</Text>
+          <TouchableOpacity
+            style={styles.sortButton}
+            onPress={toggleSortOrder}
+            testID="sort-toggle-button"
+          >
+            <Icon
+              name={sortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+              size={14}
+              color={colors.textSecondary}
+            />
+            <Text style={styles.sortButtonText}>
+              {sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.filterBar} testID="filter-bar">
-        {FILTERS.map((f) => (
+        {FILTERS.map(f => (
           <TouchableOpacity
             key={f.key}
             style={[

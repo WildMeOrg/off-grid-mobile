@@ -1,4 +1,5 @@
-import { validatePack } from '../../../src/services/packManager/validator';
+import { resolvePackFile, validatePack } from '../../../src/services/packManager/validator';
+import { resolvePackPhoto } from '../../../src/services/packManager/paths';
 
 jest.mock('react-native-fs', () => ({
   exists: jest.fn(),
@@ -20,6 +21,7 @@ interface MockFile {
   content?: string;
   size?: number;
   hash?: string;
+  canonicalPath?: string;
 }
 
 /**
@@ -36,11 +38,18 @@ const mockPackFs = (files: Record<string, MockFile>) => {
     return file.content;
   });
   mockStat.mockImplementation(async (path: string) => {
+    if (path === PACK_DIR) {
+      return { canonicalPath: PACK_DIR, isDirectory: () => true };
+    }
     const file = files[path];
     if (!file) {
       throw new Error(`ENOENT: ${path}`);
     }
-    return { size: file.size ?? file.content?.length ?? 0 };
+    return {
+      size: file.size ?? file.content?.length ?? 0,
+      canonicalPath: file.canonicalPath ?? path,
+      isFile: () => true,
+    };
   });
   mockHash.mockImplementation(async (path: string) => {
     const file = files[path];
@@ -125,6 +134,99 @@ const makeValidFiles = (): Record<string, MockFile> => ({
 const errorCodes = (result: { ok: boolean; errors?: { code: string }[] }) =>
   result.ok ? [] : result.errors!.map((e) => e.code);
 
+describe('resolvePackFile containment', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each([
+    'detector.onnx',
+    'models/detector.onnx',
+  ])('resolves an ordinary pack reference: %s', async name => {
+    mockPackFs(makeValidFiles());
+    await expect(resolvePackFile(PACK_DIR, name)).resolves.toBe(`${PACK_DIR}/models/detector.onnx`);
+  });
+
+  it.each(['/outside/detector.onnx', `${PACK_DIR}-other/detector.onnx`])('rejects a symlink escaping to %s', async canonicalPath => {
+    const files = makeValidFiles();
+    files[`${PACK_DIR}/models/detector.onnx`].canonicalPath = canonicalPath;
+    mockPackFs(files);
+
+    await expect(resolvePackFile(PACK_DIR, 'models/detector.onnx')).resolves.toBeNull();
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockHash).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if canonical path information is unavailable', async () => {
+    mockPackFs(makeValidFiles());
+    mockStat.mockResolvedValue({ size: 1000, isFile: () => true });
+    await expect(resolvePackFile(PACK_DIR, 'models/detector.onnx')).resolves.toBeNull();
+  });
+
+  it('does not treat an unpatched native filepath as a canonical path', async () => {
+    mockPackFs(makeValidFiles());
+    mockStat.mockImplementation(async (filepath: string) => ({
+      originalFilepath: filepath,
+      isFile: () => filepath !== PACK_DIR,
+      isDirectory: () => filepath === PACK_DIR,
+    }));
+    await expect(resolvePackFile(PACK_DIR, 'models/detector.onnx')).resolves.toBeNull();
+  });
+
+  it('resolves against a canonical app directory on platforms with aliased roots', async () => {
+    mockPackFs(makeValidFiles());
+    mockStat.mockImplementation(async (filepath: string) => ({
+      canonicalPath: `/canonical${filepath}`,
+      isFile: () => filepath !== PACK_DIR,
+      isDirectory: () => filepath === PACK_DIR,
+    }));
+    await expect(resolvePackFile(PACK_DIR, 'models/detector.onnx'))
+      .resolves.toBe(`/canonical${PACK_DIR}/models/detector.onnx`);
+  });
+
+  it('returns a contained reference photo', async () => {
+    const photoPath = `${PACK_DIR}/reference_photos/WB-001/ref.jpg`;
+    mockPackFs({ [photoPath]: { size: 100 } });
+    await expect(resolvePackPhoto(PACK_DIR, INDIVIDUAL_A, 'ref.jpg')).resolves.toBe(photoPath);
+  });
+
+  it('rejects reference-photo symlinks outside the pack', async () => {
+    mockPackFs({
+      [`${PACK_DIR}/reference_photos/WB-001/ref.jpg`]: { size: 100, canonicalPath: '/outside/private.jpg' },
+    });
+    await expect(resolvePackPhoto(PACK_DIR, INDIVIDUAL_A, 'ref.jpg')).resolves.toBeNull();
+  });
+
+  it('rejects unsafe individual IDs before resolving a reference photo', async () => {
+    mockPackFs(makeValidFiles());
+    await expect(resolvePackPhoto(PACK_DIR, { ...INDIVIDUAL_A, id: '../other' }, 'ref.jpg')).resolves.toBeNull();
+    expect(mockStat).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '',
+    '../outside.bin',
+    'models/../../outside.bin',
+    '/tmp/outside.bin',
+    'C:/outside.bin',
+    'C:outside.bin',
+    '\\\\server\\share\\outside.bin',
+    'file:///tmp/outside.bin',
+    'models\\..\\outside.bin',
+    'models//detector.onnx',
+    './models/detector.onnx',
+    'models/../detector.onnx',
+    '%2e%2e/outside.bin',
+    'models/%252e%252e/outside.bin',
+    'models/detector.onnx\u0000extra',
+    'models/detector.onnx\n',
+  ])('rejects an unsafe reference before filesystem access: %s', async name => {
+    mockExists.mockResolvedValue(true);
+    await expect(resolvePackFile(PACK_DIR, name)).resolves.toBeNull();
+    expect(mockExists).not.toHaveBeenCalled();
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockHash).not.toHaveBeenCalled();
+  });
+});
+
 describe('validatePack', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -142,6 +244,50 @@ describe('validatePack', () => {
     }
   });
 
+  it.each(['filename', 'configFile'])('rejects an unsafe detector %s', async field => {
+    const manifest = makeManifest();
+    const files = makeValidFiles();
+    files[`${PACK_DIR}/manifest.json`] = {
+      content: JSON.stringify({
+        ...manifest,
+        detectorModel: { ...manifest.detectorModel, [field]: '../outside.bin' },
+      }),
+    };
+    mockPackFs(files);
+
+    expect(errorCodes(await validatePack(PACK_DIR))).toContain('unsafe-path');
+    expect(mockExists).not.toHaveBeenCalledWith(`${PACK_DIR}/../outside.bin`);
+  });
+
+  it.each([false, true])('rejects unsafe checksum paths even when skipChecksums is %s', async skipChecksums => {
+    const files = makeValidFiles();
+    files[`${PACK_DIR}/manifest.json`] = {
+      content: JSON.stringify(makeManifest({ checksums: { '../outside.bin': 'sha256:test' } })),
+    };
+    mockPackFs(files);
+
+    expect(errorCodes(await validatePack(PACK_DIR, { skipChecksums }))).toContain('unsafe-path');
+    expect(mockExists).not.toHaveBeenCalledWith(`${PACK_DIR}/../outside.bin`);
+    expect(mockHash).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { id: '../other-project' },
+    { id: 'nested/individual' },
+    { referencePhotos: ['../../../outside.jpg'] },
+    { referencePhotos: ['file:///outside.jpg'] },
+    { referencePhotos: ['%2e%2e/outside.jpg'] },
+    { referencePhotos: [null] },
+  ])('rejects unsafe individual photo references: %j', async overrides => {
+    const files = makeValidFiles();
+    files[`${PACK_DIR}/embeddings/index.json`] = {
+      content: makeIndex([{ ...INDIVIDUAL_A, ...overrides }, INDIVIDUAL_B]),
+    };
+    mockPackFs(files);
+
+    expect(errorCodes(await validatePack(PACK_DIR))).toContain('unsafe-path');
+  });
+
   it('reports a missing manifest', async () => {
     const files = makeValidFiles();
     delete files[`${PACK_DIR}/manifest.json`];
@@ -150,6 +296,15 @@ describe('validatePack', () => {
     const result = await validatePack(PACK_DIR);
 
     expect(errorCodes(result)).toContain('manifest-missing');
+  });
+
+  it('rejects a manifest symlink before reading its contents', async () => {
+    const files = makeValidFiles();
+    files[`${PACK_DIR}/manifest.json`].canonicalPath = '/outside/manifest.json';
+    mockPackFs(files);
+
+    expect(errorCodes(await validatePack(PACK_DIR))).toContain('unsafe-path');
+    expect(mockReadFile).not.toHaveBeenCalled();
   });
 
   it('reports an unparseable manifest', async () => {

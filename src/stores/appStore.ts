@@ -15,6 +15,10 @@ interface AppState {
   // Device info
   deviceInfo: DeviceInfo | null;
   setDeviceInfo: (info: DeviceInfo) => void;
+
+  /** Android-only LiteRT/GPU model preference; ignored on iOS. */
+  preferGpuModel: boolean;
+  setPreferGpuModel: (prefer: boolean) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -27,6 +31,8 @@ export const useAppStore = create<AppState>()(
         set({ hasCompletedOnboarding: complete }),
       deviceInfo: null,
       setDeviceInfo: (info) => set({ deviceInfo: info }),
+      preferGpuModel: false,
+      setPreferGpuModel: (prefer) => set({ preferGpuModel: prefer }),
     }),
     {
       name: 'local-llm-app-storage',
@@ -34,6 +40,7 @@ export const useAppStore = create<AppState>()(
       partialize: (state) => ({
         themeMode: state.themeMode,
         hasCompletedOnboarding: state.hasCompletedOnboarding,
+        preferGpuModel: state.preferGpuModel,
       }),
     }
   )

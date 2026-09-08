@@ -3,6 +3,7 @@ import type { EmbeddingPack, EmbeddingPackManifest, PackIndividual } from '../..
 import type { PackIndexFile } from './types';
 import { validatePack } from './validator';
 import type { PackValidationResult } from './validator';
+import { hasSafeIndividualPhotoPaths } from './paths';
 import logger from '../../utils/logger';
 
 const PACKS_DIR = `${RNFS.DocumentDirectoryPath}/embedding_packs`;
@@ -19,6 +20,9 @@ class PackManager {
   async loadPackIndex(indexFilePath: string): Promise<PackIndividual[]> {
     const content = await RNFS.readFile(indexFilePath, 'utf8');
     const parsed: PackIndexFile = JSON.parse(content);
+    if (!parsed || !Array.isArray(parsed.individuals) || !parsed.individuals.every(hasSafeIndividualPhotoPaths)) {
+      throw new Error('Pack index contains unsafe individual or reference-photo paths');
+    }
     return parsed.individuals;
   }
 

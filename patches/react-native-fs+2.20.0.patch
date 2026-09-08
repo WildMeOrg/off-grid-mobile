@@ -1,0 +1,48 @@
+diff --git a/node_modules/react-native-fs/FS.common.js b/node_modules/react-native-fs/FS.common.js
+index 62b7ba7..2b75e21 100644
+--- a/node_modules/react-native-fs/FS.common.js
++++ b/node_modules/react-native-fs/FS.common.js
+@@ -300,6 +300,7 @@ var RNFS = {
+         'size': result.size,
+         'mode': result.mode,
+         'originalFilepath': result.originalFilepath,
++        'canonicalPath': result.canonicalPath,
+         isFile: () => result.type === RNFSFileTypeRegular,
+         isDirectory: () => result.type === RNFSFileTypeDirectory,
+       };
+diff --git a/node_modules/react-native-fs/RNFSManager.m b/node_modules/react-native-fs/RNFSManager.m
+index 5ddd941..058d47e 100644
+--- a/node_modules/react-native-fs/RNFSManager.m
++++ b/node_modules/react-native-fs/RNFSManager.m
+@@ -105,6 +105,7 @@ RCT_EXPORT_METHOD(stat:(NSString *)filepath
+                  @"mtime": [self dateToTimeIntervalNumber:(NSDate *)[attributes objectForKey:NSFileModificationDate]],
+                  @"size": [attributes objectForKey:NSFileSize],
+                  @"type": [attributes objectForKey:NSFileType],
++                 @"canonicalPath": [[filepath stringByStandardizingPath] stringByResolvingSymlinksInPath],
+                  @"mode": @([[NSString stringWithFormat:@"%ld", (long)[(NSNumber *)[attributes objectForKey:NSFilePosixPermissions] integerValue]] integerValue])
+                  };
+ 
+diff --git a/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java b/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java
+index 351ac06..5aa4ea4 100644
+--- a/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java
++++ b/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java
+@@ -638,6 +638,7 @@ public class RNFSManager extends ReactContextBaseJavaModule {
+       statMap.putDouble("size", (double) file.length());
+       statMap.putInt("type", file.isDirectory() ? 1 : 0);
+       statMap.putString("originalFilepath", originalFilepath);
++      statMap.putString("canonicalPath", file.getCanonicalPath());
+ 
+       promise.resolve(statMap);
+     } catch (Exception ex) {
+diff --git a/node_modules/react-native-fs/index.d.ts b/node_modules/react-native-fs/index.d.ts
+index da3fa7d..dc6f060 100644
+--- a/node_modules/react-native-fs/index.d.ts
++++ b/node_modules/react-native-fs/index.d.ts
+@@ -25,6 +25,7 @@ type StatResult = {
+ 	ctime: number // Created date
+ 	mtime: number // Last modified date
+ 	originalFilepath: string // In case of content uri this is the pointed file path, otherwise is the same as path
++	canonicalPath?: string
+ 	isFile: () => boolean // Is the file just a file?
+ 	isDirectory: () => boolean // Is the file a directory?
+ }

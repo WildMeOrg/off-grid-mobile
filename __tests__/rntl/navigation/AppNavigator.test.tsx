@@ -92,7 +92,7 @@ describe('AppNavigator', () => {
       expect(getAllByText('Home').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Packs').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Observations').length).toBeGreaterThanOrEqual(1);
-      expect(getAllByText('Sync').length).toBeGreaterThanOrEqual(1);
+      expect(getAllByText('Upload').length).toBeGreaterThanOrEqual(1);
     });
 
     it('renders all tab buttons with testIDs', () => {
@@ -183,7 +183,7 @@ describe('AppNavigator', () => {
       expect(getAllByText('Home').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Packs').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Observations').length).toBeGreaterThanOrEqual(1);
-      expect(getAllByText('Sync').length).toBeGreaterThanOrEqual(1);
+      expect(getAllByText('Upload').length).toBeGreaterThanOrEqual(1);
 
       // All tab buttons should be pressable
       expect(getByTestId('home-tab')).toBeTruthy();

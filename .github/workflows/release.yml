@@ -1,34 +1,43 @@
 name: Build and Release Android
-# NOTE: The iOS workflow (release-ios.yml) triggers via workflow_run on this workflow.
-# If you rename this workflow, update the workflow_run trigger in release-ios.yml.
 
 on:
-  workflow_dispatch:  # Disabled - manual trigger only for now
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Publish as a field-test prerelease
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      ELEBOOK_CONFIG_JSON: ${{ vars.ELEBOOK_CONFIG_JSON }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0  # Fetch all history for changelog
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: npm
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
@@ -40,73 +49,124 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Bump patch version
+      - name: Configure release deployment
+        run: npm run configure
+
+      - name: Read and verify release version
+        id: release-version
+        shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version patch --no-git-tag-version
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-
-          # Update Android versionCode and versionName
-          VERSION_CODE=$(date +%s)
-          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-
-          # Update build.gradle
-          sed -i "s/versionCode .*/versionCode $VERSION_CODE/" android/app/build.gradle
-          sed -i "s/versionName .*/versionName \"$NEW_VERSION\"/" android/app/build.gradle
-
-          git add package.json package-lock.json android/app/build.gradle
-          git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
-          git push
-
-      - name: Generate release notes
-        run: |
-          # Get commits since last tag (or all commits if no tags)
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LAST_TAG" ]; then
-            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
-          else
-            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          VERSION=$(node -p "require('./package.json').version")
+          if ! grep -Fq "versionName \"$VERSION\"" android/app/build.gradle; then
+            echo "::error::package.json version $VERSION does not match android/app/build.gradle"
+            exit 1
           fi
-
-          # Write release notes
-          echo "## What's Changed" > release-notes.md
-          echo "" >> release-notes.md
-          echo "$COMMITS" >> release-notes.md
-          echo "" >> release-notes.md
-          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG:-v0.0.0}...v${{ env.NEW_VERSION }}" >> release-notes.md
-
-          cat release-notes.md
-
-      - name: Build Android Release APK
-        run: |
-          cd android
-          ./gradlew assembleRelease
-
-      - name: Rename APK
-        run: |
-          mv android/app/build/outputs/apk/release/app-release.apk \
-             android/app/build/outputs/apk/release/OffgridMobile-v${{ env.NEW_VERSION }}.apk
-
-      - name: Create GitHub Release
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::GitHub release v$VERSION already exists"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create v${{ env.NEW_VERSION }} \
-            android/app/build/outputs/apk/release/OffgridMobile-v${{ env.NEW_VERSION }}.apk \
-            --title "Off Grid v${{ env.NEW_VERSION }}" \
-            --notes-file release-notes.md
 
-      - name: Upload APK artifact
+      - name: Restore release keystore
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.ELEBOOK_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$RELEASE_KEYSTORE_BASE64" ]]; then
+            echo "::error::ELEBOOK_RELEASE_KEYSTORE_BASE64 is not configured"
+            exit 1
+          fi
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" \
+            | base64 --decode \
+            > android/app/elebook-release.keystore
+
+      - name: Run release quality gates
+        run: |
+          npm run typecheck
+          npx eslint .
+          npx jest --coverage --forceExit
+
+      - name: Test, lint, and build signed ARM64 APK
+        env:
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_STORE_FILE: elebook-release.keystore
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_STORE_PASSWORD: ${{ secrets.ELEBOOK_RELEASE_STORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_KEY_ALIAS: ${{ secrets.ELEBOOK_RELEASE_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_ELEBOOK_RELEASE_KEY_PASSWORD: ${{ secrets.ELEBOOK_RELEASE_KEY_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+
+      - name: Verify and name APK
+        id: apk
+        shell: bash
+        run: |
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          OUTPUT=android/app/build/outputs/apk/release/EleBook-v${VERSION}-arm64.apk
+
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          "$BUILD_TOOLS/zipalign" -c -P 16 4 "$APK"
+          cp "$APK" "$OUTPUT"
+          sha256sum "$OUTPUT" > "$OUTPUT.sha256"
+
+          echo "APK_PATH=$OUTPUT" >> "$GITHUB_ENV"
+          echo "CHECKSUM_PATH=$OUTPUT.sha256" >> "$GITHUB_ENV"
+          echo "apk_path=$OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=$OUTPUT.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Generate field release notes
+        shell: bash
+        run: |
+          {
+            echo "## EleBook Android field test"
+            echo
+            echo "- Package: \`org.ganesha.elebook\`"
+            echo "- Version: \`${VERSION}\`"
+            echo "- Architecture: \`arm64-v8a\`"
+            echo "- Minimum Android: 7.0 (API 24)"
+            echo
+            echo "Install the APK before going offline, then sign in and download the model and project pack."
+            echo
+            echo "### SHA-256"
+            echo
+            echo '```text'
+            cat "$CHECKSUM_PATH"
+            echo '```'
+          } > release-notes.md
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          EXTRA_ARGS=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            EXTRA_ARGS+=(--prerelease)
+          fi
+          gh release create "v${VERSION}" \
+            "$APK_PATH" \
+            "$CHECKSUM_PATH" \
+            --title "EleBook v${VERSION}" \
+            --notes-file release-notes.md \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OffgridMobile-v${{ env.NEW_VERSION }}
-          path: android/app/build/outputs/apk/standard/release/OffgridMobile-v${{ env.NEW_VERSION }}.apk
+          name: EleBook-v${{ steps.release-version.outputs.version }}-arm64
+          path: |
+            ${{ steps.apk.outputs.apk_path }}
+            ${{ steps.apk.outputs.checksum_path }}
           if-no-files-found: error
+          retention-days: 30
