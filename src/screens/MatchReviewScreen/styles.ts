@@ -126,6 +126,18 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
     color: colors.textMuted,
     marginTop: SPACING.xs,
   },
+  profileLink: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: SPACING.sm,
+    minHeight: SPACING.xxl + SPACING.md,
+  },
+  profileLinkText: {
+    ...TYPOGRAPHY.bodySmall,
+    letterSpacing: 0,
+    color: colors.primary,
+    flexShrink: 1,
+  },
   sourceBadge: {
     paddingHorizontal: SPACING.sm,
     paddingVertical: 2,

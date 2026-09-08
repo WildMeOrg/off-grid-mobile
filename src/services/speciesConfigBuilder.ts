@@ -159,6 +159,7 @@ export async function buildActiveSpeciesConfigs(
       const manifest = await loadManifestSafe(primary.packDir);
       return {
         packId: primary.id,
+        projectId: groupPacks.length === 1 ? primary.id : null,
         species: primary.species,
         detectorModelPath: primary.detectorModelFile,
         detectorConfig: await loadDetectorConfig(primary.packDir, manifest),

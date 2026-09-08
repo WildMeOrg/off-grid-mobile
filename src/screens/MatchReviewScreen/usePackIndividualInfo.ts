@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { EmbeddingPack, MatchCandidate } from '../../types';
-import { packManager } from '../../services/packManager';
+import { loadBrowserIndividuals, packIdentity } from '../../services/individualBrowser/files';
 import { resolvePackPhoto } from '../../services/packManager/paths';
 import logger from '../../utils/logger';
 
@@ -8,6 +8,7 @@ import logger from '../../utils/logger';
 export interface PackIndividualInfo {
   name: string;
   refPhotoUri: string | null;
+  packId: string;
 }
 
 /**
@@ -23,7 +24,7 @@ async function resolvePackIndividuals(
 ): Promise<Record<string, PackIndividualInfo>> {
   const resolved: Record<string, PackIndividualInfo> = {};
   try {
-    const individuals = await packManager.loadPackIndex(pack.indexFile);
+    const individuals = await loadBrowserIndividuals(pack);
     for (const individual of individuals) {
       if (!pendingIds.has(individual.id)) {
         continue;
@@ -35,6 +36,7 @@ async function resolvePackIndividuals(
         individual.referencePhotos[matchingCandidate?.refPhotoIndex ?? 0] ??
         individual.referencePhotos[0];
       resolved[individual.id] = {
+        packId: pack.id,
         name: individual.name ?? individual.id,
         refPhotoUri: refPhotoFilename
           ? await resolvePackPhoto(pack.packDir, individual, refPhotoFilename)
@@ -60,18 +62,17 @@ export function usePackIndividualInfo(
   candidates: MatchCandidate[],
   packs: EmbeddingPack[],
 ): Record<string, PackIndividualInfo> {
-  const [packIndividualInfo, setPackIndividualInfo] = useState<
-    Record<string, PackIndividualInfo>
-  >({});
+  const signature = JSON.stringify([
+    candidates.map(candidate => [candidate.individualId, candidate.source, candidate.refPhotoIndex]),
+    packs.map(packIdentity),
+  ]);
+  const [result, setResult] = useState<{ signature: string; info: Record<string, PackIndividualInfo> }>({ signature: '', info: {} });
 
   useEffect(() => {
+    if (result.signature === signature) return;
     const packCandidates = candidates.filter(c => c.source === 'pack');
-    const pendingIds = new Set(
-      packCandidates
-        .filter(c => !packIndividualInfo[c.individualId])
-        .map(c => c.individualId),
-    );
-    if (pendingIds.size === 0) {
+    const pendingIds = new Set(packCandidates.map(candidate => candidate.individualId));
+    if (pendingIds.size === 0 || packs.length === 0) {
       return;
     }
 
@@ -79,22 +80,25 @@ export function usePackIndividualInfo(
 
     (async () => {
       const resolved: Record<string, PackIndividualInfo> = {};
+      const ambiguousIds = new Set<string>();
       for (const pack of packs) {
-        Object.assign(
-          resolved,
-          await resolvePackIndividuals(pack, packCandidates, pendingIds),
-        );
+        if (cancelled) return;
+        const found = await resolvePackIndividuals(pack, packCandidates, pendingIds);
+        for (const [individualId, info] of Object.entries(found)) {
+          if (resolved[individualId]) ambiguousIds.add(individualId);
+          resolved[individualId] = info;
+        }
       }
-      if (!cancelled && Object.keys(resolved).length > 0) {
-        setPackIndividualInfo(prev => ({ ...prev, ...resolved }));
+      for (const individualId of ambiguousIds) delete resolved[individualId];
+      if (!cancelled) {
+        setResult({ signature, info: resolved });
       }
     })();
 
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidates, packs]);
+  }, [candidates, packs, signature, result.signature]);
 
-  return packIndividualInfo;
+  return result.signature === signature ? result.info : {};
 }

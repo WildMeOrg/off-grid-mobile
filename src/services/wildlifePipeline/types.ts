@@ -3,6 +3,7 @@ import type { EmbeddingDatabaseEntry } from '../embeddingMatchService/types';
 
 export interface SpeciesConfig {
   packId: string;
+  projectId?: string | null;
   species: string;
   detectorModelPath: string;
   detectorConfig: DetectorConfig;

@@ -201,7 +201,7 @@ class WildlifePipeline {
             lifeStage: null,
             behavior: null,
             submitterId: null,
-            projectId: null,
+            projectId: config.projectId === undefined ? config.packId : config.projectId,
           },
           ganeshaSubmissionId: null,
         },

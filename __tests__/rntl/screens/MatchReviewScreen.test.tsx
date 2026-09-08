@@ -25,6 +25,7 @@ import RNFS from 'react-native-fs';
 // Navigation mocks (must be before component import)
 // ---------------------------------------------------------------------------
 const mockGoBack = jest.fn();
+const mockNavigate = jest.fn();
 const mockUsePreventRemove = jest.fn();
 jest.mock('@react-navigation/native', () => {
   const actual = jest.requireActual('@react-navigation/native');
@@ -32,7 +33,7 @@ jest.mock('@react-navigation/native', () => {
     ...actual,
     usePreventRemove: (...args: unknown[]) => mockUsePreventRemove(...args),
     useNavigation: () => ({
-      navigate: jest.fn(),
+      navigate: mockNavigate,
       goBack: mockGoBack,
       setOptions: jest.fn(),
       addListener: jest.fn(() => jest.fn()),
@@ -263,14 +264,18 @@ describe('MatchReviewScreen', () => {
   });
 
   it('resolves pack individual name and reference photo from the pack index', async () => {
+    const scopedDetection = makeDetection({ encounterFields: { ...makeDetection().encounterFields, projectId: 'example-project' } });
+    mockObservations = [makeObservation([scopedDetection])];
+    (RNFS.exists as jest.Mock).mockImplementation(async (filepath: string) => filepath === '/data/packs/example-project/embeddings/index.json');
     (RNFS.stat as jest.Mock).mockImplementation(async (filepath: string) => ({
       canonicalPath: filepath,
-      isFile: () => filepath.endsWith('.jpg'),
+      isFile: () => /\.(jpg|json)$/.test(filepath),
       isDirectory: () => filepath === '/data/packs/example-project',
     }));
     mockPacks = [
       {
         id: 'example-project',
+        status: 'ready',
         packDir: '/data/packs/example-project',
         species: 'zebra_plains',
         referencePhotosDir: '/data/packs/example-project/reference_photos',
@@ -303,6 +308,9 @@ describe('MatchReviewScreen', () => {
     expect(getByTestId('candidate-photo-ind-1').props.source.uri).toBe(
       'file:///data/packs/example-project/reference_photos/ind-1/ref_01.jpg',
     );
+    fireEvent.press(getByTestId('view-individual-ind-1'));
+    expect(mockNavigate).toHaveBeenCalledWith('IndividualDetail', { packId: 'example-project', individualId: 'ind-1' });
+    expect(mockUpdateDetection).not.toHaveBeenCalled();
   });
 
   // ==========================================================================
@@ -313,6 +321,12 @@ describe('MatchReviewScreen', () => {
     const { getByTestId } = render(<MatchReviewScreen />);
     expect(getByTestId('approve-ind-1')).toBeTruthy();
     expect(getByTestId('approve-ind-2')).toBeTruthy();
+  });
+
+  it('does not offer a profile link for ambiguous legacy scope or provisional candidates', () => {
+    const screen = render(<MatchReviewScreen />);
+    expect(screen.queryByTestId('view-individual-ind-1')).toBeNull();
+    expect(screen.queryByTestId('view-individual-ind-2')).toBeNull();
   });
 
   // ==========================================================================

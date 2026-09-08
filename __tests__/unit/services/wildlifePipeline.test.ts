@@ -104,7 +104,7 @@ describe('WildlifePipeline', () => {
     expect(typeof wildlifePipeline.processPhoto).toBe('function');
   });
 
-  it('should return detections with match results', async () => {
+  it.each([undefined, 'project-1', null])('returns matches and preserves explicit or ambiguous project scope: %s', async projectId => {
     const detectionResult = {
       boundingBox: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
       species: 'zebra_plains',
@@ -122,7 +122,7 @@ describe('WildlifePipeline', () => {
       { individualId: 'zebra-A', score: 0.92, source: 'pack', refPhotoIndex: 0 },
     ]);
 
-    const config = makeSpeciesConfig();
+    const config = makeSpeciesConfig({ projectId });
     const result = await wildlifePipeline.processPhoto({
       photoUri: 'file:///photos/zebra.jpg',
 
@@ -145,6 +145,7 @@ describe('WildlifePipeline', () => {
     expect(detection.matchResult.topCandidates[0].individualId).toBe('zebra-A');
     expect(detection.matchResult.approvedIndividual).toBeNull();
     expect(detection.matchResult.reviewStatus).toBe('pending');
+    expect(detection.encounterFields.projectId).toBe(projectId === undefined ? config.packId : projectId);
   });
 
   it('should load detector model when not already loaded', async () => {
