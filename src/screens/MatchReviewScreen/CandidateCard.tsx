@@ -31,6 +31,7 @@ interface CandidateCardProps {
   displayId: string;
   refPhotoUri: string | null;
   onApprove: (individualId: string) => void;
+  isSaving: boolean;
   styles: ReturnType<typeof createStyles>;
 }
 
@@ -41,6 +42,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   displayId,
   refPhotoUri,
   onApprove,
+  isSaving,
   styles,
 }) => {
   const { colors } = useTheme();
@@ -86,6 +88,8 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
       <TouchableOpacity
         style={styles.approveButton}
         onPress={() => onApprove(candidate.individualId)}
+        disabled={isSaving}
+        accessibilityState={{ disabled: isSaving, busy: isSaving }}
         testID={`approve-${candidate.individualId}`}
       >
         <Text style={styles.approveButtonText}>Approve</Text>

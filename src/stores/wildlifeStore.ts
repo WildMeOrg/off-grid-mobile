@@ -19,8 +19,11 @@ import {
   listObservationsWithDetections,
   listSyncQueue,
   clearAllObservationData,
+  migrateLegacyObservationData,
+  type LegacyObservationData,
 } from '../services/database';
 import logger from '../utils/logger';
+import { migrateWildlifeState } from './wildlifeStoreMigration';
 
 // ---------------------------------------------------------------------------
 // State shape
@@ -44,6 +47,7 @@ interface WildlifeState {
   syncQueue: SyncQueueItem[];
   miewidModel: MiewIDModelRecord | null;
   nextFieldId: number;
+  legacyObservationData: LegacyObservationData | null;
 
   // Pack actions
   addPack: (pack: EmbeddingPack) => void;
@@ -99,6 +103,7 @@ const INITIAL_STATE = {
   syncQueue: [] as SyncQueueItem[],
   miewidModel: null as MiewIDModelRecord | null,
   nextFieldId: 1,
+  legacyObservationData: null as LegacyObservationData | null,
 };
 
 // ---------------------------------------------------------------------------
@@ -283,45 +288,8 @@ export const useWildlifeStore = create<WildlifeState>()(
     {
       name: 'wildlife-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 3,
-      migrate: (persisted, fromVersion) => {
-        const state = persisted as Record<string, unknown>;
-        if (fromVersion < 1) {
-          // v0 persisted a bare `miewidModelPath: string | null`. Wrap it in
-          // a MiewIDModelRecord with status 'missing'; startup reconciliation
-          // promotes it to 'ready' if the file checks out on disk.
-          const legacyPath = state.miewidModelPath as string | null | undefined;
-          state.miewidModel = legacyPath
-            ? ({
-                path: legacyPath,
-                name: 'miewid',
-                version: 'unknown',
-                sha256: null,
-                sizeBytes: null,
-                status: 'missing',
-                verifiedAt: null,
-                format: 'onnx',
-              } satisfies MiewIDModelRecord)
-            : null;
-          delete state.miewidModelPath;
-        }
-        if (fromVersion < 2) {
-          const legacyPacks = Array.isArray(state.packs)
-            ? (state.packs as EmbeddingPack[])
-            : [];
-          state.packs = legacyPacks.map((pack) => ({
-            ...pack,
-            packVersion: pack.packVersion ?? 'unknown',
-          }));
-        }
-        if (fromVersion < 3) {
-          const legacyModel = state.miewidModel as (MiewIDModelRecord & { format?: unknown }) | null | undefined;
-          if (legacyModel && !legacyModel.format) {
-            state.miewidModel = { ...legacyModel, format: 'onnx' };
-          }
-        }
-        return state;
-      },
+      version: 4,
+      migrate: migrateWildlifeState,
       // observations/syncQueue are deliberately excluded: they now live in
       // SQLite (see hydrateObservationsFromDb), not this AsyncStorage blob.
       partialize: (state) => ({
@@ -329,6 +297,7 @@ export const useWildlifeStore = create<WildlifeState>()(
         localIndividuals: state.localIndividuals,
         miewidModel: state.miewidModel,
         nextFieldId: state.nextFieldId,
+        legacyObservationData: state.legacyObservationData,
       }),
     },
   ),
@@ -340,9 +309,22 @@ export const useWildlifeStore = create<WildlifeState>()(
  * after the AsyncStorage-backed slice has rehydrated -- see App.tsx.
  */
 export async function hydrateObservationsFromDb(): Promise<void> {
+  const { legacyObservationData } = useWildlifeStore.getState();
+  if (legacyObservationData) {
+    await migrateLegacyObservationData(legacyObservationData);
+  }
   const [observations, syncQueue] = await Promise.all([
     listObservationsWithDetections(),
     listSyncQueue(),
   ]);
-  useWildlifeStore.setState({ observations, syncQueue });
+  for (const item of syncQueue) {
+    if (item.status !== 'uploading') continue;
+    const recovery = {
+      status: 'failed' as const,
+      lastError: 'Upload interrupted. Please retry.',
+    };
+    await updateSyncQueueFields(item.observationId, recovery);
+    Object.assign(item, recovery);
+  }
+  useWildlifeStore.setState({ observations, syncQueue, legacyObservationData: null });
 }

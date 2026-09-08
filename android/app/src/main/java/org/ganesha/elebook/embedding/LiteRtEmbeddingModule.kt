@@ -3,6 +3,7 @@ package org.ganesha.elebook.embedding
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Log
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -11,37 +12,44 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableNativeArray
 import com.facebook.react.bridge.WritableNativeMap
 import org.ganesha.elebook.imagetensor.ImageTensorModule
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * React Native bridge for [LiteRtEmbeddingEngine]. The JS embedding service
  * selects this Android runtime or ONNX based on the installed artifact.
  * Load, embed, and unload calls share one engine per module instance.
  */
-class LiteRtEmbeddingModule(reactContext: ReactApplicationContext) :
+class LiteRtEmbeddingModule(
+    reactContext: ReactApplicationContext,
+    private val engine: LiteRtEmbeddingEngine = LiteRtEmbeddingEngine(),
+) :
     ReactContextBaseJavaModule(reactContext) {
 
     companion object {
         const val NAME = "LiteRtEmbeddingModule"
     }
 
-    private val engine = LiteRtEmbeddingEngine()
+    private val executor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "EleBook-LiteRT")
+    }
 
     override fun getName(): String = NAME
 
     @ReactMethod
     fun isGpuSupported(promise: Promise) {
-        Thread {
+        execute(promise) {
             try {
                 promise.resolve(LiteRtEmbeddingEngine.isGpuSupported())
             } catch (e: Exception) {
                 promise.reject("GPU_CHECK_ERROR", "Failed to check GPU delegate support: ${e.message}", e)
             }
-        }.start()
+        }
     }
 
     @ReactMethod
     fun loadModel(modelPath: String, preferGpu: Boolean, promise: Promise) {
-        Thread {
+        execute(promise) {
             try {
                 val result = engine.loadModel(modelPath, preferGpu)
                 val map = WritableNativeMap()
@@ -52,7 +60,7 @@ class LiteRtEmbeddingModule(reactContext: ReactApplicationContext) :
             } catch (e: Exception) {
                 promise.reject("MODEL_LOAD_ERROR", "Failed to load LiteRT model: ${e.message}", e)
             }
-        }.start()
+        }
     }
 
     @ReactMethod
@@ -65,10 +73,10 @@ class LiteRtEmbeddingModule(reactContext: ReactApplicationContext) :
         expectedDim: Double,
         promise: Promise,
     ) {
-        Thread {
+        execute(promise) {
             try {
                 val bitmap = loadBitmap(imageUri)
-                    ?: return@Thread promise.reject("IMAGE_ERROR", "Could not load image: $imageUri")
+                    ?: return@execute promise.reject("IMAGE_ERROR", "Could not load image: $imageUri")
 
                 val meanArr = doubleArrayOf(mean.getDouble(0), mean.getDouble(1), mean.getDouble(2))
                 val stdArr = doubleArrayOf(std.getDouble(0), std.getDouble(1), std.getDouble(2))
@@ -98,19 +106,45 @@ class LiteRtEmbeddingModule(reactContext: ReactApplicationContext) :
             } catch (e: Exception) {
                 promise.reject("EMBED_ERROR", "Failed to extract embedding: ${e.message}", e)
             }
-        }.start()
+        }
     }
 
     @ReactMethod
     fun unloadModel(promise: Promise) {
-        Thread {
+        execute(promise) {
             try {
                 engine.unload()
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.reject("UNLOAD_ERROR", "Failed to unload LiteRT model: ${e.message}", e)
             }
-        }.start()
+        }
+    }
+
+    private fun execute(promise: Promise, action: () -> Unit) {
+        synchronized(executor) {
+            try {
+                executor.execute(action)
+            } catch (_: RejectedExecutionException) {
+                promise.reject("MODULE_INVALIDATED", "LiteRT module is no longer available")
+            }
+        }
+    }
+
+    override fun invalidate() {
+        synchronized(executor) {
+            if (!executor.isShutdown) {
+                executor.execute {
+                    try {
+                        engine.unload()
+                    } catch (error: Exception) {
+                        Log.e(NAME, "Failed to unload LiteRT model during invalidation", error)
+                    }
+                }
+                executor.shutdown()
+            }
+        }
+        super.invalidate()
     }
 
     private fun loadBitmap(uri: String): Bitmap? {

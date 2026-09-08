@@ -126,6 +126,17 @@ async function clearStaleCandidate(path: string): Promise<void> {
   await RNFS.unlink(path);
 }
 
+function unregisteredCandidateDir(baseDir: string): string {
+  const registeredDirs = new Set(useWildlifeStore.getState().packs.map(pack => pack.packDir));
+  let candidateDir = baseDir;
+  let attempt = 0;
+  while (registeredDirs.has(candidateDir)) {
+    attempt += 1;
+    candidateDir = `${baseDir}-repair-${attempt}`;
+  }
+  return candidateDir;
+}
+
 export async function preparePackCandidate({
   projectId,
   info,
@@ -139,7 +150,7 @@ export async function preparePackCandidate({
     await RNFS.mkdir(packDownloadsDir());
     zipStaging = zipStagingPathFor(projectId, info.version, packSha256);
     zipFinal = zipFinalPathFor(projectId, info.version, packSha256);
-    extractDir = extractDirFor(projectId, info.version, packSha256);
+    extractDir = unregisteredCandidateDir(extractDirFor(projectId, info.version, packSha256));
   } catch (error) {
     return {
       ok: false,

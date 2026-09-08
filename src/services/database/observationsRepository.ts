@@ -1,4 +1,4 @@
-import type { Detection, Observation } from '../../types';
+import type { Detection, Observation, SyncQueueItem } from '../../types';
 import { getDb } from './connection';
 import type { DetectionRow, ObservationRow } from './rowMapping';
 import { mapDetectionRow, mapObservationRow } from './rowMapping';
@@ -8,7 +8,10 @@ import { mapDetectionRow, mapObservationRow } from './rowMapping';
  * sync_queue row in a single transaction -- an observation is never
  * durably half-saved (e.g. present but with no way to sync it later).
  */
-export async function insertObservationWithDetections(observation: Observation): Promise<void> {
+export async function insertObservationWithDetections(
+  observation: Observation,
+  syncQueueItem?: SyncQueueItem,
+): Promise<void> {
   const database = getDb();
   await database.transaction(async (tx) => {
     await tx.execute(
@@ -62,9 +65,18 @@ export async function insertObservationWithDetections(observation: Observation):
     }
 
     await tx.execute(
-      `INSERT INTO sync_queue (observation_id, status, wildbook_instance_url, retry_count, last_error, last_attempt, synced_at, wildbook_encounter_ids_json)
-       VALUES (?, 'pending', '', 0, NULL, NULL, NULL, '[]')`,
-      [observation.id],
+      `INSERT OR REPLACE INTO sync_queue (observation_id, status, wildbook_instance_url, retry_count, last_error, last_attempt, synced_at, wildbook_encounter_ids_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        observation.id,
+        syncQueueItem?.status ?? 'pending',
+        syncQueueItem?.wildbookInstanceUrl ?? '',
+        syncQueueItem?.retryCount ?? 0,
+        syncQueueItem?.lastError ?? null,
+        syncQueueItem?.lastAttempt ?? null,
+        syncQueueItem?.syncedAt ?? null,
+        JSON.stringify(syncQueueItem?.wildbookEncounterIds ?? []),
+      ],
     );
   });
 }

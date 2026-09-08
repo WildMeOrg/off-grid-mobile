@@ -345,6 +345,30 @@ describe('PacksScreen', () => {
   // Download and update actions
   // ==========================================================================
   describe('download button', () => {
+    it.each([null, 'missing', 'corrupt', 'incompatible'] as const)(
+      'repairs a %s model when the installed pack is current',
+      async status => {
+        const installedPack = createPack({ id: 'example-project', status: 'ready' });
+        useWildlifeStore.setState({
+          packs: [installedPack],
+          miewidModel: status ? { ...readyModel, status } : null,
+        });
+        mockCheckLatestPackStatus.mockResolvedValue({ ok: true, isLatest: true, latestVersion: installedPack.packVersion });
+        mockPrepareMiewidModel.mockResolvedValue(readyModel);
+        mockAcquireLatestPack.mockResolvedValue({ ok: true, pack: installedPack });
+        let focusCallback: (() => void) | undefined;
+        mockUseFocusEffect.mockImplementation(callback => { focusCallback = callback; });
+        const { getByTestId, getByText } = render(<PacksScreen />);
+
+        act(() => focusCallback?.());
+        await waitFor(() => expect(getByText('Update available')).toBeTruthy());
+        fireEvent.press(getByTestId('update-pack-button'));
+
+        await waitFor(() => expect(mockAcquireLatestPack).toHaveBeenCalledWith('example-project', {}, readyModel));
+        expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource);
+      },
+    );
+
     it('reports that the installed pack is up to date without downloading it', async () => {
       const installedPack = createPack({
         id: 'example-project',

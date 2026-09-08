@@ -323,6 +323,57 @@ describe('acquireLatestPack', () => {
     );
   });
 
+  it('repairs the same quarantined release in a separate directory before activation', async () => {
+    const quarantined = makeInstalledPack({
+      packVersion: makePackInfo().version,
+      artifactSha256: PACK_SHA,
+      packDir: EXTRACT_DIR,
+      status: 'quarantined',
+    });
+    useWildlifeStore.setState({ packs: [quarantined] });
+    mockGetLatestPack.mockResolvedValue({ ok: true, data: makePackInfo() });
+    mockInstallPack.mockImplementation(async (path: string) => {
+      expect(path).not.toBe(EXTRACT_DIR);
+      expect(useWildlifeStore.getState().packs).toEqual([quarantined]);
+      expect(mockUnlink).not.toHaveBeenCalledWith(EXTRACT_DIR);
+      return { ok: true, manifest: makeManifest(), individuals: makeIndividuals() };
+    });
+
+    const result = await acquireLatestPack(PROJECT_ID);
+
+    expect(result.ok).toBe(true);
+    expect(useWildlifeStore.getState().packs[0]).toMatchObject({
+      packVersion: quarantined.packVersion,
+      artifactSha256: PACK_SHA,
+      packDir: `${EXTRACT_DIR}-repair-1`,
+      status: 'ready',
+    });
+    expect(mockUnlink).not.toHaveBeenCalledWith(EXTRACT_DIR);
+  });
+
+  it.each(['validation', 'activation'])('keeps a quarantined release intact when repair %s fails', async stage => {
+    const quarantined = makeInstalledPack({
+      packVersion: makePackInfo().version,
+      artifactSha256: PACK_SHA,
+      packDir: EXTRACT_DIR,
+      status: 'quarantined',
+    });
+    useWildlifeStore.setState({ packs: [quarantined] });
+    mockGetLatestPack.mockResolvedValue({ ok: true, data: makePackInfo() });
+    if (stage === 'validation') {
+      mockInstallPack.mockResolvedValue({ ok: false, errors: [{ code: 'checksum-mismatch', detail: 'embeddings.bin' }] });
+    } else {
+      mockStorageSetItem.mockRejectedValueOnce(new Error('storage full'));
+    }
+
+    const result = await acquireLatestPack(PROJECT_ID);
+
+    expect(result).toMatchObject({ ok: false, code: `${stage}-failed` });
+    expect(useWildlifeStore.getState().packs).toEqual([quarantined]);
+    expect(mockUnlink).not.toHaveBeenCalledWith(EXTRACT_DIR);
+    expect(mockUnlink).toHaveBeenCalledWith(`${EXTRACT_DIR}-repair-1`);
+  });
+
   it('normalizes pack SHA metadata for verification and installed identity', async () => {
     mockGetLatestPack.mockResolvedValue({
       ok: true,

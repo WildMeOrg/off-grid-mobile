@@ -10,7 +10,7 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 import { useAppStore } from '../stores';
 import { useWildlifeStore } from '../stores/wildlifeStore';
 import type { EmbeddingPack } from '../types/wildlife';
-import type { ModelFormat } from '../types';
+import type { MiewIDModelRecord, ModelFormat } from '../types';
 import type { RootStackParamList } from '../navigation/types';
 import { GANESHA_PROJECT_ID } from '../config/ganeshaApi';
 import { MIEWID_LITERT_MODEL_NAME, MIEWID_MODEL_NAME } from '../config/modelSources';
@@ -64,11 +64,11 @@ function resolveDesiredModelFormat(preferGpuModel: boolean): ModelFormat {
  */
 function computeEffectivePackUpdateState(
   packUpdateState: PackUpdateState,
-  installedFormat: ModelFormat | undefined,
+  installedModel: MiewIDModelRecord | null,
   desiredFormat: ModelFormat,
 ): PackUpdateState {
-  const formatMismatch = installedFormat != null && installedFormat !== desiredFormat;
-  return packUpdateState === 'current' && formatMismatch ? 'available' : packUpdateState;
+  const modelNeedsRepair = installedModel?.status !== 'ready' || installedModel.format !== desiredFormat;
+  return packUpdateState === 'current' && modelNeedsRepair ? 'available' : packUpdateState;
 }
 
 export const PacksScreen: React.FC = () => {
@@ -83,7 +83,7 @@ export const PacksScreen: React.FC = () => {
   const statusRequest = useRef(0);
   const effectivePackUpdateState = computeEffectivePackUpdateState(
     packUpdateState,
-    miewidModel?.format,
+    miewidModel,
     resolveDesiredModelFormat(preferGpuModel),
   );
   const installedProjectPack = packs.find(

@@ -1,9 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, Image, TouchableOpacity, FlatList } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useRoute } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Feather';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { useThemedStyles, useTheme } from '../../theme';
 import { useWildlifeStore } from '../../stores';
@@ -14,11 +13,8 @@ import { SPACING } from '../../constants';
 import { CandidateCard } from './CandidateCard';
 import { createStyles } from './styles';
 import { usePackIndividualInfo } from './usePackIndividualInfo';
+import { useReviewDecision } from './useReviewDecision';
 
-type NavigationProp = NativeStackNavigationProp<
-  RootStackParamList,
-  'MatchReview'
->;
 type MatchReviewRouteProp = RouteProp<RootStackParamList, 'MatchReview'>;
 
 interface ResolvedCandidate {
@@ -32,7 +28,6 @@ export const MatchReviewScreen: React.FC = () => {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<NavigationProp>();
   const route = useRoute<MatchReviewRouteProp>();
   const { observationId, detectionId } = route.params;
 
@@ -41,16 +36,12 @@ export const MatchReviewScreen: React.FC = () => {
   );
   const localIndividuals = useWildlifeStore(s => s.localIndividuals);
   const packs = useWildlifeStore(s => s.packs);
-  const updateDetection = useWildlifeStore(s => s.updateDetection);
-  const addLocalIndividual = useWildlifeStore(s => s.addLocalIndividual);
-  const addEmbeddingToLocalIndividual = useWildlifeStore(
-    s => s.addEmbeddingToLocalIndividual,
-  );
 
   const detection = useMemo(
     () => observation?.detections.find(d => d.id === detectionId) ?? null,
     [observation, detectionId],
   );
+  const { isSaving, saveDecision, goBack } = useReviewDecision(observationId, detection);
 
   const candidates = detection?.matchResult.topCandidates ?? [];
   const packIndividualInfo = usePackIndividualInfo(candidates, packs);
@@ -83,83 +74,6 @@ export const MatchReviewScreen: React.FC = () => {
     });
   }, [candidates, localIndividuals, packIndividualInfo]);
 
-  const handleBack = useCallback(() => {
-    navigation.goBack();
-  }, [navigation]);
-
-  const handleApprove = useCallback(
-    (individualId: string) => {
-      const approvedCandidate = candidates.find(
-        c => c.individualId === individualId,
-      );
-      if (approvedCandidate?.source === 'local' && detection) {
-        addEmbeddingToLocalIndividual(
-          individualId,
-          detection.embedding,
-          detection.croppedImageUri,
-        );
-      }
-
-      updateDetection(observationId, detectionId, {
-        matchResult: {
-          topCandidates: candidates,
-          approvedIndividual: individualId,
-          reviewStatus: 'approved',
-        },
-      });
-      navigation.goBack();
-    },
-    [
-      navigation,
-      updateDetection,
-      addEmbeddingToLocalIndividual,
-      observationId,
-      detectionId,
-      candidates,
-      detection,
-    ],
-  );
-
-  const handleNoMatch = useCallback(() => {
-    if (!detection) return;
-
-    // Create a new local individual from this detection
-    const newId = useWildlifeStore.getState().getNextFieldId();
-    addLocalIndividual({
-      localId: newId,
-      userLabel: null,
-      species: detection.species,
-      embeddings: [detection.embedding],
-      referencePhotos: [detection.croppedImageUri],
-      firstSeen: new Date().toISOString(),
-      encounterCount: 1,
-      syncStatus: 'pending',
-      wildbookId: null,
-    });
-
-    // Update detection to reference the new individual
-    updateDetection(observationId, detectionId, {
-      matchResult: {
-        topCandidates: candidates,
-        approvedIndividual: newId,
-        reviewStatus: 'approved',
-      },
-    });
-    navigation.goBack();
-  }, [
-    navigation,
-    detection,
-    addLocalIndividual,
-    updateDetection,
-    observationId,
-    detectionId,
-    candidates,
-  ]);
-
-  const handleSkip = useCallback(() => {
-    navigation.goBack();
-  }, [navigation]);
-
   const renderCandidate = useCallback(
     ({ item, index }: { item: ResolvedCandidate; index: number }) => (
       <CandidateCard
@@ -168,11 +82,12 @@ export const MatchReviewScreen: React.FC = () => {
         name={item.name}
         displayId={item.displayId}
         refPhotoUri={item.refPhotoUri}
-        onApprove={handleApprove}
+        onApprove={saveDecision}
+        isSaving={isSaving}
         styles={styles}
       />
     ),
-    [handleApprove, styles],
+    [saveDecision, isSaving, styles],
   );
 
   const keyExtractor = useCallback(
@@ -189,7 +104,7 @@ export const MatchReviewScreen: React.FC = () => {
       >
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={handleBack}
+            onPress={goBack}
             style={styles.backButton}
             testID="back-button"
           >
@@ -211,7 +126,8 @@ export const MatchReviewScreen: React.FC = () => {
     >
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={handleBack}
+          onPress={goBack}
+          disabled={isSaving}
           style={styles.backButton}
           testID="back-button"
         >
@@ -252,7 +168,9 @@ export const MatchReviewScreen: React.FC = () => {
       <View style={[styles.footer, { paddingBottom: SPACING.md + insets.bottom }]} testID="match-review-footer">
         <TouchableOpacity
           style={styles.newIndividualButton}
-          onPress={handleNoMatch}
+          onPress={() => saveDecision(null)}
+          disabled={isSaving}
+          accessibilityState={{ disabled: isSaving, busy: isSaving }}
           testID="no-match-button"
         >
           <Icon name="user-plus" size={18} color={colors.text} />
@@ -263,7 +181,8 @@ export const MatchReviewScreen: React.FC = () => {
 
         <TouchableOpacity
           style={styles.skipButton}
-          onPress={handleSkip}
+          onPress={goBack}
+          disabled={isSaving}
           testID="skip-button"
         >
           <Text style={styles.skipText}>Skip</Text>

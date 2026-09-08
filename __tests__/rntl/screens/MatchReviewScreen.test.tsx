@@ -17,17 +17,20 @@
  */
 
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { act, render, fireEvent, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 import RNFS from 'react-native-fs';
 
 // ---------------------------------------------------------------------------
 // Navigation mocks (must be before component import)
 // ---------------------------------------------------------------------------
 const mockGoBack = jest.fn();
+const mockUsePreventRemove = jest.fn();
 jest.mock('@react-navigation/native', () => {
   const actual = jest.requireActual('@react-navigation/native');
   return {
     ...actual,
+    usePreventRemove: (...args: unknown[]) => mockUsePreventRemove(...args),
     useNavigation: () => ({
       navigate: jest.fn(),
       goBack: mockGoBack,
@@ -170,6 +173,7 @@ import { MatchReviewScreen } from '../../../src/screens/MatchReviewScreen';
 describe('MatchReviewScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUpdateDetection.mockResolvedValue(undefined);
     mockLoadPackIndex.mockResolvedValue([]);
     mockObservations = [makeObservation()];
     mockPacks = [];
@@ -323,7 +327,7 @@ describe('MatchReviewScreen', () => {
     expect(getByText('Skip')).toBeTruthy();
   });
 
-  it('approve updates store and navigates back', () => {
+  it('approve updates store and navigates back', async () => {
     const { getByTestId } = render(<MatchReviewScreen />);
     fireEvent.press(getByTestId('approve-ind-1'));
 
@@ -333,13 +337,14 @@ describe('MatchReviewScreen', () => {
         reviewStatus: 'approved',
       }),
     });
-    expect(mockGoBack).toHaveBeenCalled();
+    await waitFor(() => expect(mockGoBack).toHaveBeenCalled());
   });
 
-  it('approve for local individual accumulates embedding', () => {
+  it('approve for local individual accumulates embedding', async () => {
     const { getByTestId } = render(<MatchReviewScreen />);
     // ind-2 is the local candidate in our test data
     fireEvent.press(getByTestId('approve-ind-2'));
+    await waitFor(() => expect(mockGoBack).toHaveBeenCalled());
 
     expect(mockAddEmbeddingToLocalIndividual).toHaveBeenCalledWith(
       'ind-2',
@@ -355,10 +360,11 @@ describe('MatchReviewScreen', () => {
     expect(mockGoBack).toHaveBeenCalled();
   });
 
-  it('approve for pack individual does not accumulate embedding', () => {
+  it('approve for pack individual does not accumulate embedding', async () => {
     const { getByTestId } = render(<MatchReviewScreen />);
     // ind-1 is the pack candidate in our test data
     fireEvent.press(getByTestId('approve-ind-1'));
+    await waitFor(() => expect(mockGoBack).toHaveBeenCalled());
 
     expect(mockAddEmbeddingToLocalIndividual).not.toHaveBeenCalled();
     expect(mockUpdateDetection).toHaveBeenCalledWith('obs-1', 'det-1', {
@@ -370,9 +376,10 @@ describe('MatchReviewScreen', () => {
     expect(mockGoBack).toHaveBeenCalled();
   });
 
-  it('No Match creates a new local individual and approves it', () => {
+  it('No Match creates a new local individual and approves it', async () => {
     const { getByTestId } = render(<MatchReviewScreen />);
     fireEvent.press(getByTestId('no-match-button'));
+    await waitFor(() => expect(mockGoBack).toHaveBeenCalled());
 
     // Should have called getNextFieldId to generate an ID
     expect(mockGetNextFieldId).toHaveBeenCalled();
@@ -401,12 +408,13 @@ describe('MatchReviewScreen', () => {
     expect(mockGoBack).toHaveBeenCalled();
   });
 
-  it('No Match includes firstSeen timestamp in new individual', () => {
+  it('No Match includes firstSeen timestamp in new individual', async () => {
     const fixedDate = '2026-02-28T12:00:00.000Z';
     jest.spyOn(Date.prototype, 'toISOString').mockReturnValue(fixedDate);
 
     const { getByTestId } = render(<MatchReviewScreen />);
     fireEvent.press(getByTestId('no-match-button'));
+    await waitFor(() => expect(mockGoBack).toHaveBeenCalled());
 
     expect(mockAddLocalIndividual).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -417,11 +425,12 @@ describe('MatchReviewScreen', () => {
     jest.restoreAllMocks();
   });
 
-  it('No Match uses field ID from getNextFieldId in detection update', () => {
+  it('No Match uses field ID from getNextFieldId in detection update', async () => {
     mockGetNextFieldId.mockReturnValueOnce('FIELD-042');
 
     const { getByTestId } = render(<MatchReviewScreen />);
     fireEvent.press(getByTestId('no-match-button'));
+    await waitFor(() => expect(mockGoBack).toHaveBeenCalled());
 
     expect(mockAddLocalIndividual).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -443,6 +452,50 @@ describe('MatchReviewScreen', () => {
     expect(mockAddLocalIndividual).not.toHaveBeenCalled();
     expect(mockGoBack).toHaveBeenCalled();
   });
+
+  it('waits for a durable save and blocks repeated decisions, skip, and back while saving', async () => {
+    let finishSave: (() => void) | undefined;
+    mockUpdateDetection.mockReturnValueOnce(new Promise<void>(resolve => { finishSave = resolve; }));
+    const { getByTestId } = render(<MatchReviewScreen />);
+
+    fireEvent.press(getByTestId('approve-ind-1'));
+    fireEvent.press(getByTestId('approve-ind-2'));
+    fireEvent.press(getByTestId('no-match-button'));
+    fireEvent.press(getByTestId('skip-button'));
+    fireEvent.press(getByTestId('back-button'));
+
+    expect(mockUpdateDetection).toHaveBeenCalledTimes(1);
+    expect(mockGoBack).not.toHaveBeenCalled();
+    expect(mockAddLocalIndividual).not.toHaveBeenCalled();
+    expect(mockAddEmbeddingToLocalIndividual).not.toHaveBeenCalled();
+    expect(getByTestId('approve-ind-1').props.accessibilityState).toEqual({ disabled: true, busy: true });
+    expect(mockUsePreventRemove).toHaveBeenLastCalledWith(true, expect.any(Function));
+
+    await act(async () => { finishSave?.(); });
+
+    expect(mockUsePreventRemove).toHaveBeenLastCalledWith(false, expect.any(Function));
+    expect(mockGoBack).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['approve-ind-1', 'approve-ind-2', 'no-match-button'])(
+    'keeps a failed %s save on screen without local-individual side effects and allows retry',
+    async buttonId => {
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+      mockUpdateDetection.mockRejectedValueOnce(new Error('disk full'));
+      const { getByTestId } = render(<MatchReviewScreen />);
+
+      fireEvent.press(getByTestId(buttonId));
+
+      await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Save failed', expect.any(String)));
+      expect(mockGoBack).not.toHaveBeenCalled();
+      expect(mockAddLocalIndividual).not.toHaveBeenCalled();
+      expect(mockAddEmbeddingToLocalIndividual).not.toHaveBeenCalled();
+      fireEvent.press(getByTestId(buttonId));
+      await waitFor(() => expect(mockGoBack).toHaveBeenCalledTimes(1));
+      expect(mockUpdateDetection).toHaveBeenCalledTimes(2);
+      alertSpy.mockRestore();
+    },
+  );
 
   // ==========================================================================
   // Bottom inset (Android gesture/navigation bar regression)

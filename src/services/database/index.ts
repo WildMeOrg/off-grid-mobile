@@ -1,4 +1,6 @@
 export { initDatabase, __resetDatabaseForTests } from './connection';
+export { migrateLegacyObservationData } from './legacyObservationMigration';
+export type { LegacyObservationData } from './legacyObservationMigration';
 export {
   insertObservationWithDetections,
   listObservationsWithDetections,
