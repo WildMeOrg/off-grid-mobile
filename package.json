@@ -1,6 +1,6 @@
 {
   "name": "offgrid-mobile",
-  "version": "0.1.0-field.3",
+  "version": "0.1.0-field.4",
   "private": true,
   "scripts": {
     "configure": "node scripts/configure-app.js",
