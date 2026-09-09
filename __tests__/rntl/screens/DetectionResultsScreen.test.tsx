@@ -14,8 +14,8 @@
  */
 
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { render as renderComponent, fireEvent, waitFor, act } from '@testing-library/react-native';
+import { Alert, StyleSheet } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Navigation mocks (must be before component import)
@@ -117,6 +117,31 @@ jest.mock('../../../src/stores/wildlifeStore', () => ({
 // Import component under test
 // ---------------------------------------------------------------------------
 import { DetectionResultsScreen } from '../../../src/screens/DetectionResultsScreen';
+
+const defaultGeometry = {
+  photo: { width: 1200, height: 800 },
+  frame: { width: 600, height: 900 },
+};
+
+function loadPhoto(
+  screen: ReturnType<typeof renderComponent>,
+  geometry = defaultGeometry,
+) {
+  const photo = screen.getByTestId('observation-photo');
+  fireEvent(photo, 'layout', {
+    persist: () => {},
+    nativeEvent: { layout: { x: 0, y: 0, ...geometry.frame } },
+  });
+  fireEvent(photo, 'load', { nativeEvent: { source: geometry.photo } });
+}
+
+function render(element: React.ReactElement) {
+  const screen = renderComponent(element);
+  if (screen.queryByTestId('observation-photo')) {
+    loadPhoto(screen);
+  }
+  return screen;
+}
 
 /** Auto-presses "Save Anyway" on the review-confirmation dialog -- the
  * default for tests that only care whether the save itself happens. Tests
@@ -229,6 +254,123 @@ describe('DetectionResultsScreen', () => {
     expect(getByTestId('box-reviewed-det-1')).toBeTruthy();
     expect(getByText('Duma')).toBeTruthy();
     expect(queryByText('zebra_plains')).toBeNull();
+  });
+
+  it.each([
+    {
+      name: 'landscape image in a portrait frame',
+      photo: { width: 1200, height: 800 },
+      frame: { width: 600, height: 900 },
+      expected: { left: 0, top: 250, width: 600, height: 400 },
+    },
+    {
+      name: 'portrait image in a landscape frame',
+      photo: { width: 800, height: 1200 },
+      frame: { width: 900, height: 600 },
+      expected: { left: 250, top: 0, width: 400, height: 600 },
+    },
+    {
+      name: 'square image in a portrait frame',
+      photo: { width: 800, height: 800 },
+      frame: { width: 600, height: 900 },
+      expected: { left: 0, top: 150, width: 600, height: 600 },
+    },
+    {
+      name: 'matching aspect ratios',
+      photo: { width: 1200, height: 800 },
+      frame: { width: 600, height: 400 },
+      expected: { left: 0, top: 0, width: 600, height: 400 },
+    },
+  ])('aligns boxes to the contained $name', ({ photo, frame, expected }) => {
+    const screen = renderComponent(<DetectionResultsScreen />);
+    loadPhoto(screen, { photo, frame });
+
+    expect(StyleSheet.flatten(screen.getByTestId('detection-overlay').props.style))
+      .toMatchObject(expected);
+    expect(StyleSheet.flatten(screen.getByTestId('bounding-box-det-1').props.style))
+      .toMatchObject({ left: '10%', top: '20%', width: '30%', height: '40%' });
+    expect(mockObservations[0].detections[0].boundingBox)
+      .toEqual({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 });
+  });
+
+  it('keeps boxes hidden until image dimensions and layout are available', () => {
+    const screen = renderComponent(<DetectionResultsScreen />);
+    expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+    fireEvent(screen.getByTestId('observation-photo'), 'load', {
+      nativeEvent: { source: defaultGeometry.photo },
+    });
+    expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+    fireEvent(screen.getByTestId('observation-photo'), 'layout', {
+      persist: () => {},
+      nativeEvent: { layout: { x: 0, y: 0, ...defaultGeometry.frame } },
+    });
+    expect(screen.getByTestId('bounding-box-det-1')).toBeTruthy();
+  });
+
+  it('recomputes image offsets after the available frame resizes', () => {
+    const screen = render(<DetectionResultsScreen />);
+    fireEvent(screen.getByTestId('observation-photo'), 'layout', {
+      persist: () => {},
+      nativeEvent: { layout: { x: 0, y: 0, width: 900, height: 600 } },
+    });
+
+    expect(StyleSheet.flatten(screen.getByTestId('detection-overlay').props.style))
+      .toMatchObject({ left: 0, top: 0, width: 900, height: 600 });
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'does not show boxes for an invalid image width %s',
+    width => {
+      const screen = renderComponent(<DetectionResultsScreen />);
+      loadPhoto(screen, {
+        photo: { width, height: 800 }, frame: defaultGeometry.frame,
+      });
+      expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+    },
+  );
+
+  it('hides boxes when the image fails or its layout has no area', () => {
+    const screen = render(<DetectionResultsScreen />);
+    fireEvent(screen.getByTestId('observation-photo'), 'error', {
+      nativeEvent: { error: 'Image unavailable' },
+    });
+    expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+    loadPhoto(screen);
+    expect(screen.getByTestId('bounding-box-det-1')).toBeTruthy();
+    fireEvent(screen.getByTestId('observation-photo'), 'layout', {
+      persist: () => {},
+      nativeEvent: { layout: { x: 0, y: 0, width: 0, height: 900 } },
+    });
+    expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+  });
+
+  it('does not reuse image geometry after the photo source changes', () => {
+    const screen = render(<DetectionResultsScreen />);
+    const previousPhoto = screen.getByTestId('observation-photo');
+    const previousLoad = previousPhoto.props.onLoad;
+    const previousError = previousPhoto.props.onError;
+    mockObservations = [{ ...makeObservation(), photoUri: 'file:///test/portrait.jpg' }];
+    screen.rerender(<DetectionResultsScreen />);
+    expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+    loadPhoto(screen, {
+      photo: { width: 800, height: 1200 }, frame: defaultGeometry.frame,
+    });
+    const expected = { left: 0, top: 0, width: 600, height: 900 };
+    expect(StyleSheet.flatten(screen.getByTestId('detection-overlay').props.style))
+      .toMatchObject(expected);
+    act(() => {
+      previousLoad({ nativeEvent: { source: defaultGeometry.photo } });
+      previousError({ nativeEvent: { error: 'Old request failed' } });
+    });
+    expect(StyleSheet.flatten(screen.getByTestId('detection-overlay').props.style))
+      .toMatchObject(expected);
+  });
+
+  it('does not display detection boxes without a photo', () => {
+    mockObservations = [{ ...makeObservation(), photoUri: '' }];
+    const screen = renderComponent(<DetectionResultsScreen />);
+    expect(screen.queryByTestId('observation-photo')).toBeNull();
+    expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
   });
 
   // ==========================================================================
