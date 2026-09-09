@@ -6,6 +6,7 @@ import { IndividualsScreen } from '../../../src/screens/IndividualsScreen';
 import { IndividualDetailScreen } from '../../../src/screens/IndividualDetailScreen';
 import { IndividualImageScreen } from '../../../src/screens/IndividualImageScreen';
 import type { RootStackParamList } from '../../../src/navigation/types';
+import type { PackIndividual } from '../../../src/types';
 import { loadBrowserIndividuals, loadReferencePhotos } from '../../../src/services/individualBrowser/files';
 import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
 import { makeIndividual, makePack } from '../../utils/individualBrowserFixtures';
@@ -24,8 +25,9 @@ jest.mock('../../../src/services/individualBrowser/files', () => ({
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-it('preserves the search and native back stack through list, detail, and full-screen image', async () => {
-  (loadBrowserIndividuals as jest.Mock).mockResolvedValue([makeIndividual(), makeIndividual({ id: 'individual-2', name: 'Zola' })]);
+it.each(['success', 'failure'])('keeps the catalog mounted until a same-pack return refresh settles: %s', async outcome => {
+  const roster = [makeIndividual(), makeIndividual({ id: 'individual-2', name: 'Zola' })];
+  (loadBrowserIndividuals as jest.Mock).mockResolvedValue(roster);
   (loadReferencePhotos as jest.Mock).mockResolvedValue([
     { key: 'reference:one.jpg', kind: 'reference', uri: '/mock/documents/embedding_packs/test/reference_photos/individual-1/one.jpg' },
   ]);
@@ -41,6 +43,7 @@ it('preserves the search and native back stack through list, detail, and full-sc
     </NavigationContainer>,
   );
   await screen.findByTestId('individual-row-individual-1', {}, { timeout: 5000 });
+  const catalog = screen.getByTestId('individual-list');
   fireEvent.changeText(screen.getByLabelText('Search individuals'), 'Button');
   await waitFor(() => expect(screen.queryByTestId('individual-row-individual-2')).toBeNull());
   fireEvent.press(screen.getByTestId('individual-row-individual-1'));
@@ -51,7 +54,23 @@ it('preserves the search and native back stack through list, detail, and full-sc
   expect(navigation.getRootState().routes.map(route => route.name)).toEqual(['Individuals', 'IndividualDetail', 'IndividualImage']);
   await act(async () => { navigation.goBack(); });
   await waitFor(() => expect(navigation.getCurrentRoute()?.name).toBe('IndividualDetail'));
+  let finishRefresh: (individuals: PackIndividual[]) => void = () => undefined;
+  let failRefresh: (error: Error) => void = () => undefined;
+  (loadBrowserIndividuals as jest.Mock).mockImplementationOnce(() => new Promise<PackIndividual[]>((resolve, reject) => {
+    finishRefresh = resolve;
+    failRefresh = reject;
+  }));
   await act(async () => { navigation.goBack(); });
+  expect(screen.getByTestId('individual-list')).toBe(catalog);
+  expect(screen.queryByTestId('browser-loading')).toBeNull();
+  if (outcome === 'failure') {
+    await act(async () => { failRefresh(new Error('Index unavailable')); });
+    expect(screen.getByTestId('browser-error')).toBeTruthy();
+    expect(screen.queryByTestId('individual-list')).toBeNull();
+    return;
+  }
+  await act(async () => { finishRefresh([...roster]); });
+  expect(screen.getByTestId('individual-list')).toBe(catalog);
   await screen.findByTestId('individual-row-individual-1');
   expect(navigation.getCurrentRoute()?.name).toBe('Individuals');
   expect(screen.getByLabelText('Search individuals').props.value).toBe('Button');

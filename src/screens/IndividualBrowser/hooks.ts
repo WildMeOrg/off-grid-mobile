@@ -23,7 +23,8 @@ export function useBrowserPack(packId: string | undefined) {
   useEffect(() => {
     if (!pack || pack.status !== 'ready' || !focused) return;
     let cancelled = false;
-    setResult({ identity, status: 'loading', individuals: [] });
+    setResult(previous => previous.identity === identity && previous.status === 'ready'
+      ? previous : { identity, status: 'loading', individuals: [] });
     loadBrowserIndividuals(pack).then(individuals => {
       if (!cancelled) setResult({ identity, status: 'ready', individuals });
     }).catch(() => {
