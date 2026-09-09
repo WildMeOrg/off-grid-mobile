@@ -26,7 +26,7 @@ The app needs exactly six public strings. Start with [deployment.example.json](.
 | `apiClientId` | API registration UUID. |
 | `redirectUrl` | Exactly `org.ganesha.elebook://oauthredirect`, matching the native registrations. |
 
-Pack acquisition has a narrower limit: project IDs and pack version strings must fit within 40 UTF-16 code units. For live setup, keep `projectId` within that limit even though configuration accepts up to 128 characters; see [pack candidate paths](../src/services/packDownloadService/candidate.ts).
+Pack acquisition has a narrower limit: project IDs and pack version strings must fit within 40 UTF-16 code units. For live setup, keep `projectId` within that limit even though configuration accepts up to 128 characters; see [pack candidate paths](../src/services/packDownloadService/candidate.ts). Identities are digested into short directory names, so their length does not affect on-device paths.
 
 The `.invalid` endpoint and dummy IDs are deliberately non-live. They support CI, static checks, and builds, not real sign-in, model/pack downloads, or uploads.
 
@@ -58,7 +58,7 @@ These values are bundled into the app and are not secrets. Do not add client sec
 
 The native public client uses the system browser and PKCE, with no client secret. The maintainer must register the fixed redirect and allow the API scope `api://<apiClientId>/access_as_user`; the app also requests `openid`, `profile`, and `offline_access`. See [auth configuration](../src/config/entraAuth.ts).
 
-Tokens use OS secure storage. The storage namespace incorporates all six deployment fields; legacy shared tokens are not reused, so an upgrade requires fresh sign-in. This feature does not migrate or isolate the saved profile, packs, observations, or SQLite data. Do not point a populated installation at another deployment. Protect unsynced observations and use a separate clean installation for another deployment.
+Tokens use OS secure storage. The storage namespace is a fixed prefix plus a SHA-256 digest of all six deployment fields, which keeps the Keychain/Keystore alias short enough for the file-based Android Keystore on Android 11 and earlier. Tokens stored under the previous shared or deployment-specific service names are not reused; upgrading requires fresh sign-in and leaves those older entries in secure storage. This feature does not migrate or isolate the saved profile, packs, observations, or SQLite data. Do not point a populated installation at another deployment. Protect unsynced observations and use a separate clean installation for another deployment.
 
 See [deployment configuration](../src/config/deployment.ts) and [token handling](../src/services/entraAuthService.ts) for the implementation.
 

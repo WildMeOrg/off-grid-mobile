@@ -25,6 +25,7 @@ import { getObservationStatusPresentation } from '../services/observationStatus'
 import { getObservationStatusColor } from '../utils/observationStatusColors';
 import { useIndividualNameResolver } from '../hooks/useIndividualNameResolver';
 import { createStyles } from './ObservationDetailScreen.styles';
+import { ReviewedIndividualLink } from './IndividualBrowser/IndividualLink';
 import logger from '../utils/logger';
 
 type NavigationProp = NativeStackNavigationProp<
@@ -97,7 +98,11 @@ export const ObservationDetailScreen: React.FC = () => {
     () => (observation?.detections ?? []).flatMap((d) => d.matchResult.topCandidates),
     [observation],
   );
-  const resolveName = useIndividualNameResolver(allCandidates, packs, localIndividuals);
+  const scopedPacks = useMemo(() => {
+    const projectIds = new Set(observation?.detections.map(detection => detection.encounterFields.projectId));
+    return projectIds.size === 1 ? packs.filter(pack => projectIds.has(pack.id)) : [];
+  }, [observation, packs]);
+  const resolveName = useIndividualNameResolver(allCandidates, scopedPacks, localIndividuals);
 
   const presentation = useMemo(
     () => (observation ? getObservationStatusPresentation(observation, syncItem) : null),
@@ -288,6 +293,7 @@ export const ObservationDetailScreen: React.FC = () => {
                   <Text style={styles.decisionText} testID={`detection-decision-${index}`}>
                     {getDetectionDecisionText(detection, decisionName)}
                   </Text>
+                  <ReviewedIndividualLink detection={detection} />
                 </View>
               </View>
 

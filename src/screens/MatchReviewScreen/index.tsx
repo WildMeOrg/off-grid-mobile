@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, Image, TouchableOpacity, FlatList } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Feather';
 import type { RouteProp } from '@react-navigation/native';
 import { useThemedStyles, useTheme } from '../../theme';
@@ -22,6 +23,7 @@ interface ResolvedCandidate {
   name: string;
   displayId: string;
   refPhotoUri: string | null;
+  packId?: string;
 }
 
 export const MatchReviewScreen: React.FC = () => {
@@ -29,6 +31,7 @@ export const MatchReviewScreen: React.FC = () => {
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const route = useRoute<MatchReviewRouteProp>();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { observationId, detectionId } = route.params;
 
   const observation = useWildlifeStore(s =>
@@ -43,8 +46,11 @@ export const MatchReviewScreen: React.FC = () => {
   );
   const { isSaving, saveDecision, goBack } = useReviewDecision(observationId, detection);
 
-  const candidates = detection?.matchResult.topCandidates ?? [];
-  const packIndividualInfo = usePackIndividualInfo(candidates, packs);
+  const candidates = useMemo(() => detection?.matchResult.topCandidates ?? [], [detection]);
+  const scopedPacks = useMemo(() => packs.filter(pack =>
+    pack.id === detection?.encounterFields.projectId && pack.status === 'ready'),
+  [packs, detection?.encounterFields.projectId]);
+  const packIndividualInfo = usePackIndividualInfo(candidates, scopedPacks);
 
   const resolvedCandidates: ResolvedCandidate[] = useMemo(() => {
     return candidates.map(candidate => {
@@ -70,6 +76,7 @@ export const MatchReviewScreen: React.FC = () => {
         name: info?.name ?? candidate.individualId,
         displayId: candidate.individualId,
         refPhotoUri: info?.refPhotoUri ?? null,
+        packId: info?.packId,
       };
     });
   }, [candidates, localIndividuals, packIndividualInfo]);
@@ -82,12 +89,15 @@ export const MatchReviewScreen: React.FC = () => {
         name={item.name}
         displayId={item.displayId}
         refPhotoUri={item.refPhotoUri}
+        onViewIndividual={item.packId ? () => navigation.navigate('IndividualDetail', {
+          packId: item.packId!, individualId: item.candidate.individualId,
+        }) : undefined}
         onApprove={saveDecision}
         isSaving={isSaving}
         styles={styles}
       />
     ),
-    [saveDecision, isSaving, styles],
+    [saveDecision, isSaving, styles, navigation],
   );
 
   const keyExtractor = useCallback(

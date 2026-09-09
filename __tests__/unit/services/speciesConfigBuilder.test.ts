@@ -124,6 +124,7 @@ describe('buildActiveSpeciesConfigs', () => {
     expect(result.speciesConfigs).toHaveLength(1);
     expect(result.speciesConfigs[0]).toMatchObject({
       packId: 'pack-elephant-001',
+      projectId: 'pack-elephant-001',
       species: 'elephant',
       detectorModelPath: '/mock/detector.onnx',
     });
@@ -143,6 +144,7 @@ describe('buildActiveSpeciesConfigs', () => {
       [],
     );
     expect(result.speciesConfigs).toHaveLength(1);
+    expect(result.speciesConfigs[0].projectId).toBeNull();
     expect(mockBuildEmbeddingDatabase).toHaveBeenCalledWith(
       'elephant',
       [packA, packB],

@@ -4,6 +4,38 @@
 
 ---
 
+## Offline individual browser
+
+*Updated: 2026-09-08. This section describes the EleBook wildlife build.*
+
+- The Individuals tab and pack-detail entry point browse only a selected, ready,
+  installed pack. WhiskerBook is the identity authority; no PWA profile data or
+  online lookups are used. Browsing reads the pack index, not embedding binaries,
+  and does not initialize inference.
+- Search uses name, stable ID, and the pack's `alternateId`; name sorting retains
+  duplicate-name records, and sex filtering is offered when populated. Details
+  allow only ID, alias, known sex, and populated life stage. Histories, neutral
+  encounter counts, GPS, and free-text research notes are not exposed.
+- Up to three available pack references are distinct from local source photos
+  and detection crops. A local link requires `reviewStatus === 'approved'`, an
+  exact `approvedIndividual` ID, and an exact `encounterFields.projectId` matching
+  the downloaded pack ID. Upload receipts and candidate rankings are not links.
+  Local approval is not WhiskerBook identity confirmation.
+- New single-pack detections retain their project ID in the existing SQLite
+  field. Legacy records with no project and combined multi-pack detector results
+  remain unlinked; provenance is not inferred from names or today's installed
+  packs. No migration or reconciliation is performed. `FIELD-*` stays provisional.
+- `src/services/individualBrowser` derives the view from current records.
+  Screens cancel outdated index/image loads and invalidate on archive, version,
+  path, or readiness changes. Review corrections and observation removal also
+  invalidate open detail/image views. Source paths are deduplicated while distinct
+  detection crops remain separate.
+- References reuse canonical pack containment. Local images must resolve inside
+  the app-private documents/observations directory. Missing or unsafe images are
+  unavailable, never deleted. Lists are virtualized; local files resolve lazily.
+
+---
+
 ## Platform Support
 
 | Feature | Android | iOS |

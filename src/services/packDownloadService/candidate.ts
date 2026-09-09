@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import RNFS from 'react-native-fs';
 import { unzip } from 'react-native-zip-archive';
 import { downloadFileWithIntegrityCheck } from '../fileDownloadService';
@@ -35,13 +37,30 @@ const packDownloadsDir = () => `${RNFS.DocumentDirectoryPath}/pack_downloads`;
 const stagingDir = () => `${RNFS.DocumentDirectoryPath}/staging`;
 
 const MAX_IDENTITY_CODE_UNITS = 40;
+/**
+ * Hex digits of SHA-256 kept per directory segment. 64 bits is ample for the handful of
+ * projects and versions one device ever holds, and keeps the whole pack path short.
+ *
+ * Directory names are digests rather than encoded identities on purpose. Native code such as
+ * ONNX Runtime opens pack files by absolute path, and on BlueStacks (Android 9 x86_64 running
+ * the arm64 app through its ARM translation layer) a 290-byte detector path failed with ENOENT
+ * while the Java file APIs saw the file; the same build for x86_64 loaded it. Encoding a
+ * 40-code-unit identity took 160 characters per level, so paths approached the 255-byte
+ * filename-component limit as well.
+ */
+const PATH_DIGEST_HEX_DIGITS = 16;
 
-const encodePathIdentity = (value: string, label: string): string => {
+const validatePathIdentity = (value: string, label: string): string => {
   if (!value || value.length > MAX_IDENTITY_CODE_UNITS) {
     throw new Error(
       `${label} must contain 1-${MAX_IDENTITY_CODE_UNITS} UTF-16 code units`,
     );
   }
+  return value;
+};
+
+/** Lossless UTF-16 code-unit encoding, so distinct identities (even malformed ones) never digest alike. */
+const utf16Hex = (value: string): string => {
   let encoded = '';
   for (let index = 0; index < value.length; index += 1) {
     encoded += value.charCodeAt(index).toString(16).padStart(4, '0');
@@ -49,43 +68,46 @@ const encodePathIdentity = (value: string, label: string): string => {
   return encoded;
 };
 
+const pathDigest = (...parts: string[]): string =>
+  bytesToHex(sha256(utf8ToBytes(parts.join('\n')))).slice(0, PATH_DIGEST_HEX_DIGITS);
+
 const artifactPathKey = (
   version: string,
-  sha256: string,
+  sha256Hex: string,
 ): string =>
-  `v-${encodePathIdentity(version, 'pack version')}-${sha256}`;
+  `v-${pathDigest(utf16Hex(validatePathIdentity(version, 'pack version')), sha256Hex)}`;
 
 const projectPathKey = (projectId: string): string =>
-  `p-${encodePathIdentity(projectId, 'project ID')}`;
+  `p-${pathDigest(utf16Hex(validatePathIdentity(projectId, 'project ID')))}`;
 
 const zipStagingPathFor = (
   projectId: string,
   version: string,
-  sha256: string,
+  sha256Hex: string,
 ) =>
   `${stagingDir()}/${projectPathKey(projectId)}/${artifactPathKey(
     version,
-    sha256,
+    sha256Hex,
   )}.zip.part`;
 
 const zipFinalPathFor = (
   projectId: string,
   version: string,
-  sha256: string,
+  sha256Hex: string,
 ) =>
   `${packDownloadsDir()}/${projectPathKey(projectId)}/${artifactPathKey(
     version,
-    sha256,
+    sha256Hex,
   )}.zip`;
 
 const extractDirFor = (
   projectId: string,
   version: string,
-  sha256: string,
+  sha256Hex: string,
 ) =>
   `${packManager.getPacksDir()}/${projectPathKey(projectId)}/${artifactPathKey(
     version,
-    sha256,
+    sha256Hex,
   )}`;
 
 const failure = (

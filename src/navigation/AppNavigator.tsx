@@ -20,6 +20,9 @@ import {
   WildlifeHomeScreen,
   PacksScreen,
   PackDetailScreen,
+  IndividualsScreen,
+  IndividualDetailScreen,
+  IndividualImageScreen,
   CaptureScreen,
   DetectionResultsScreen,
   MatchReviewScreen,
@@ -38,6 +41,7 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 const TAB_ICON_MAP: Record<string, string> = {
   HomeTab: 'home',
   PacksTab: 'archive',
+  IndividualsTab: 'users',
   ObservationsTab: 'eye',
   SyncTab: 'upload-cloud',
 };
@@ -135,6 +139,14 @@ const MainTabs: React.FC = () => {
         })}
       />
       <Tab.Screen
+        name="IndividualsTab"
+        component={IndividualsScreen}
+        options={{ tabBarLabel: 'Individuals', tabBarButtonTestID: 'individuals-tab' }}
+        listeners={() => ({
+          tabPress: () => { triggerHaptic('selection'); },
+        })}
+      />
+      <Tab.Screen
         name="ObservationsTab"
         component={ObservationsScreen}
         options={{ tabBarLabel: 'Observations', tabBarButtonTestID: 'observations-tab' }}
@@ -179,6 +191,9 @@ export const AppNavigator: React.FC = () => {
       <RootStack.Screen name="MatchReview" component={MatchReviewScreen} />
       <RootStack.Screen name="ObservationDetail" component={ObservationDetailScreen} />
       <RootStack.Screen name="PackDetails" component={PackDetailScreen} />
+      <RootStack.Screen name="Individuals" component={IndividualsScreen} />
+      <RootStack.Screen name="IndividualDetail" component={IndividualDetailScreen} />
+      <RootStack.Screen name="IndividualImage" component={IndividualImageScreen} />
       <RootStack.Screen name="Settings" component={SettingsScreen} />
       <RootStack.Screen name="SecuritySettings" component={SecuritySettingsScreen} />
       <RootStack.Screen name="SignIn" component={SignInScreen} />

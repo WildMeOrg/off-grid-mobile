@@ -8,6 +8,9 @@ export type RootStackParamList = {
   Onboarding: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   PackDetails: { packId: string };
+  Individuals: { packId: string };
+  IndividualDetail: { packId: string; individualId: string };
+  IndividualImage: { packId: string; individualId: string; imageKey: string };
   Capture: undefined;
   DetectionResults: { observationId: string };
   MatchReview: { observationId: string; detectionId: string };
@@ -22,6 +25,7 @@ export type RootStackParamList = {
 export type MainTabParamList = {
   HomeTab: undefined;
   PacksTab: undefined;
+  IndividualsTab: { packId?: string } | undefined;
   ObservationsTab: undefined;
   SyncTab: undefined;
 };

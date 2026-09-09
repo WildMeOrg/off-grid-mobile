@@ -86,11 +86,12 @@ describe('AppNavigator', () => {
   });
 
   describe('Tab bar rendering', () => {
-    it('renders all four tab labels', () => {
+    it('renders all five tab labels', () => {
       const { getAllByText } = renderAppNavigator();
 
       expect(getAllByText('Home').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Packs').length).toBeGreaterThanOrEqual(1);
+      expect(getAllByText('Individuals').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Observations').length).toBeGreaterThanOrEqual(1);
       expect(getAllByText('Upload').length).toBeGreaterThanOrEqual(1);
     });
@@ -100,6 +101,7 @@ describe('AppNavigator', () => {
 
       expect(getByTestId('home-tab')).toBeTruthy();
       expect(getByTestId('packs-tab')).toBeTruthy();
+      expect(getByTestId('individuals-tab')).toBeTruthy();
       expect(getByTestId('observations-tab')).toBeTruthy();
       expect(getByTestId('sync-tab')).toBeTruthy();
     });

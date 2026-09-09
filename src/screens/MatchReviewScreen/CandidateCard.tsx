@@ -30,6 +30,7 @@ interface CandidateCardProps {
   name: string;
   displayId: string;
   refPhotoUri: string | null;
+  onViewIndividual?: () => void;
   onApprove: (individualId: string) => void;
   isSaving: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -41,6 +42,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   name,
   displayId,
   refPhotoUri,
+  onViewIndividual,
   onApprove,
   isSaving,
   styles,
@@ -83,6 +85,12 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
           </View>
         </View>
         <Text style={styles.confirmationNotice}>Researcher confirmation required</Text>
+        {onViewIndividual && <TouchableOpacity onPress={onViewIndividual} disabled={isSaving}
+          accessibilityRole="button" accessibilityLabel={`View individual ${displayId}`} style={styles.profileLink}
+          testID={`view-individual-${displayId}`}>
+          <Icon name="user" size={18} color={colors.primary} />
+          <Text style={styles.profileLinkText}>View individual</Text>
+        </TouchableOpacity>}
       </View>
 
       <TouchableOpacity

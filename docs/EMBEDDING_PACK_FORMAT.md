@@ -162,6 +162,7 @@ Contains the species-specific detector model in ONNX format.
 - **Compatibility:** Verify the exported artifact's operators, input type, and output layout with the app's ONNX runtime. An opset number alone does not establish compatibility.
 - **Quantization:** Weight precision may vary, but the model must accept the supplied float32 input. Float16 or integer input tensors require a different input path.
 - **Illustrative size:** 5-30 MB depending on architecture and export; use artifact metadata for the actual size.
+- **Filename length:** Keep the detector filename at or below 64 characters. The installed path is about 100 bytes plus the filename on Android and 150 bytes plus the filename on iOS, and long native paths have failed to open on translated-ARM hosts.
 
 The detector model is specific to a species and feature class. Exporter naming examples (not a list of implemented decoders):
 
