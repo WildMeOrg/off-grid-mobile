@@ -26,7 +26,7 @@ The app needs exactly six public strings. Start with [deployment.example.json](.
 | `apiClientId` | API registration UUID. |
 | `redirectUrl` | Exactly `org.ganesha.elebook://oauthredirect`, matching the native registrations. |
 
-Pack acquisition has a narrower limit: project IDs and pack version strings must fit within 40 UTF-16 code units. For live setup, keep `projectId` within that limit even though configuration accepts up to 128 characters; see [pack candidate paths](../src/services/packDownloadService/candidate.ts).
+Pack acquisition has a narrower limit: project IDs and pack version strings must fit within 40 UTF-16 code units. For live setup, keep `projectId` within that limit even though configuration accepts up to 128 characters; see [pack candidate paths](../src/services/packDownloadService/candidate.ts). Identities are digested into short directory names, so their length does not affect on-device paths.
 
 The `.invalid` endpoint and dummy IDs are deliberately non-live. They support CI, static checks, and builds, not real sign-in, model/pack downloads, or uploads.
 

@@ -2,6 +2,8 @@ import {
   acquireLatestPack,
   checkLatestPackStatus,
 } from '../../../src/services/packDownloadService';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { useWildlifeStore } from '../../../src/stores/wildlifeStore';
 import type {
   EmbeddingPack,
@@ -64,17 +66,14 @@ const PACK_SHA =
   'ebed1d341b58034de6108a5b138373aa64a7e8458bc43e43909ad0850bf660ba';
 const OTHER_PACK_SHA =
   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const encodePathIdentity = (value: string): string => {
-  let encoded = '';
-  for (let index = 0; index < value.length; index += 1) {
-    encoded += value.charCodeAt(index).toString(16).padStart(4, '0');
-  }
-  return encoded;
-};
-const PROJECT_PATH = `p-${encodePathIdentity(PROJECT_ID)}`;
-const RELEASE_PATH = `v-${encodePathIdentity(
-  '2026-08-22T12:38:40Z',
-)}-${PACK_SHA}`;
+// Mirrors candidate.ts: each pack directory level is a 16-hex-digit SHA-256 prefix of the
+// UTF-16 hex encoding of the identity (plus the artifact hash for releases).
+const utf16Hex = (value: string): string =>
+  Array.from(value, (char) => char.charCodeAt(0).toString(16).padStart(4, '0')).join('');
+const pathDigest = (...parts: string[]): string =>
+  bytesToHex(sha256(utf8ToBytes(parts.join('\n')))).slice(0, 16);
+const PROJECT_PATH = `p-${pathDigest(utf16Hex(PROJECT_ID))}`;
+const RELEASE_PATH = `v-${pathDigest(utf16Hex('2026-08-22T12:38:40Z'), PACK_SHA)}`;
 const EXTRACT_DIR =
   `/mock/documents/embedding_packs/${PROJECT_PATH}/${RELEASE_PATH}`;
 const OLD_EXTRACT_DIR =
@@ -192,6 +191,30 @@ describe('acquireLatestPack', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('keeps pack directory names short even for maximal project and version identities', async () => {
+    // Native code opens pack files by absolute path; a 290-byte detector path failed on
+    // BlueStacks' ARM translation layer while Java saw the file. Identities may be 40 code
+    // units each, so the two pack directory levels must stay compact regardless.
+    const projectId = 'p'.repeat(40);
+    const version = 'v'.repeat(40);
+    mockGetLatestPack.mockResolvedValue({
+      ok: true,
+      data: makePackInfo({ projectId, version }),
+    });
+
+    const result = await acquireLatestPack(projectId);
+
+    expect(result.ok).toBe(true);
+    const [, extractDir] = mockUnzip.mock.calls[0] as [string, string];
+    const segments = extractDir
+      .replace('/mock/documents/embedding_packs/', '')
+      .split('/');
+    expect(segments).toHaveLength(2);
+    for (const segment of segments) {
+      expect(segment.length).toBeLessThanOrEqual(34);
+    }
   });
 
   it('resolves, downloads, unzips, validates, installs, and registers the pack', async () => {
@@ -517,7 +540,7 @@ describe('acquireLatestPack', () => {
     expect(mockUnlink).toHaveBeenCalledWith(EXTRACT_DIR);
   });
 
-  it('uses distinct directories when release labels sanitize to the same text', async () => {
+  it('uses distinct directories for look-alike release labels and for different artifacts of one label', async () => {
     mockGetLatestPack
       .mockResolvedValueOnce({
         ok: true,
@@ -526,16 +549,34 @@ describe('acquireLatestPack', () => {
       .mockResolvedValueOnce({
         ok: true,
         data: makePackInfo({ version: 'release:a', sha256: PACK_SHA }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: makePackInfo({ version: 'release/a', sha256: OTHER_PACK_SHA }),
       });
 
-    await acquireLatestPack(PROJECT_ID);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // Start each acquisition with no registered pack so every directory is the
+      // unsuffixed base name rather than a `-repair-N` fallback.
+      useWildlifeStore.setState({ packs: [] });
+      await acquireLatestPack(PROJECT_ID);
+    }
+
+    const extractPaths = mockUnzip.mock.calls.map((call) => call[1] as string);
+    expect(extractPaths).toHaveLength(3);
+    expect(new Set(extractPaths).size).toBe(3);
+    expect(extractPaths.some((path) => path.includes('-repair-'))).toBe(false);
+  });
+
+  it('derives stable, documented directory names for a given project, version, and artifact', async () => {
+    // Pinned on purpose: changing the derivation would strand packs downloaded by earlier builds.
+    mockGetLatestPack.mockResolvedValue({ ok: true, data: makePackInfo() });
+
     await acquireLatestPack(PROJECT_ID);
 
-    const extractPaths = mockUnzip.mock.calls.map((call) => call[1]);
-    expect(extractPaths).toHaveLength(2);
-    expect(extractPaths[0]).not.toBe(extractPaths[1]);
-    expect(extractPaths[0]).toContain(PACK_SHA);
-    expect(extractPaths[1]).toContain(PACK_SHA);
+    expect(mockUnzip.mock.calls[0][1]).toBe(
+      '/mock/documents/embedding_packs/p-04f33288d529779a/v-07b3b6af53a80300',
+    );
   });
 
   it('aborts when a stale candidate directory cannot be removed', async () => {
