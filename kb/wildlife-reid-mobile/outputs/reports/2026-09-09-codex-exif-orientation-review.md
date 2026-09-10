@@ -65,6 +65,14 @@ against an unwired `loadBitmap`.
   for normal-launch policy and the actual delegate path. Tagged JPEG bridge
   tests cover all eight orientation values; a successful new CI run is required
   before acceptance. Native tests are not silently skipped on Windows.
+- **A separate test-fixture race was subsequently identified.** PR34 run
+  `34483668391` passed the host-isolation tests, then crashed in
+  `persistStateLocked` during background restoration with
+  `-[__NSCFNumber count]: unrecognized selector`. The download tests were
+  writing directly into the shared dictionary while restoration read it.
+  All three fixture injections now use the module's existing barrier queue.
+  This is test-only synchronization, not a production download change;
+  require macOS CI for this follow-up too.
 - **The Android `content://` path is untested.** Only the plain file path is
   covered; the gallery path needs an instrumented test.
 - **Physical camera/gallery validation is still required.** Helper and bridge
