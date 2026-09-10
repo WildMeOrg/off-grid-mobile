@@ -115,7 +115,7 @@ npm run ios
 
 Apple toolchain compatibility is unresolved: the Gemfile pins `xcodeproj < 1.26.0`, while [Podfile.lock](../ios/Podfile.lock) records CocoaPods 1.17.0. Review that pin before adopting Xcode 16. These steps and a clean iOS build have not been verified on the Windows preparation host; do not treat them as a passing macOS build recipe.
 
-The [Xcode project](../ios/OffgridMobile.xcodeproj/project.pbxproj) leaves `DEVELOPMENT_TEAM` empty. A maintainer must supply their own team and provisioning for real-device builds or archives. Its marketing version is still `0.0.58`, not the npm/Android `0.1.0-field.2`; iOS release metadata needs separate review.
+The [Xcode project](../ios/OffgridMobile.xcodeproj/project.pbxproj) leaves `DEVELOPMENT_TEAM` empty. A maintainer must supply their own team and provisioning for real-device builds or archives. Its marketing version is `0.0.58` and does not track the version in [package.json](../package.json) or [android/app/build.gradle](../android/app/build.gradle); iOS release metadata needs separate review.
 
 ## Local checks
 
@@ -152,5 +152,7 @@ The manually dispatched [Android release workflow](../.github/workflows/release.
 - Repository secret `ELEBOOK_RELEASE_KEY_ALIAS`.
 - Repository secret `ELEBOOK_RELEASE_KEY_PASSWORD`.
 - Matching npm and Android version metadata, successful release gates, and approval to publish.
+
+Android `versionCode` must increase for every build a tester installs over an existing one, because Android refuses an in-place downgrade. The values look like epoch seconds because the first was generated that way, but later releases increment by hand and no longer encode a build time. Treat the number as an opaque counter that only ever goes up, and check it against the previous release rather than deriving it.
 
 Release Gradle tasks fail when signing properties or the keystore are missing; they do not fall back to debug signing. Keep the release signing identity stable for in-place updates and keep all signing material out of public configuration and version control. The workflow's presence does not establish that a release or downloadable distribution exists, and publication requires separate maintainer approval.
