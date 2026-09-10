@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Text,
@@ -19,9 +18,8 @@ import { useThemedStyles, useTheme } from '../../theme';
 import { useWildlifeStore } from '../../stores';
 import { useIndividualNameResolver } from '../../hooks/useIndividualNameResolver';
 import type { RootStackParamList } from '../../navigation/types';
-import { toDisplayUri } from '../../utils/imageUri';
 import { SPACING } from '../../constants';
-import { BoundingBoxOverlay } from './BoundingBoxOverlay';
+import { DetectionPhoto } from './DetectionPhoto';
 import { createStyles } from './styles';
 
 type NavigationProp = NativeStackNavigationProp<
@@ -155,24 +153,15 @@ export const DetectionResultsScreen: React.FC = () => {
         style={styles.photoContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {observation?.photoUri ? (
-          <Image
-            source={{ uri: toDisplayUri(observation.photoUri) }}
-            style={styles.photo}
-            resizeMode="contain"
-            testID="observation-photo"
+        {observation ? (
+          <DetectionPhoto
+            key={observation.photoUri}
+            photoUri={observation.photoUri}
+            detections={detections}
+            onBoxPress={handleBoxPress}
+            resolveName={resolveName}
           />
         ) : null}
-        <View style={styles.overlayContainer}>
-          {detections.map(detection => (
-            <BoundingBoxOverlay
-              key={detection.id}
-              detection={detection}
-              onPress={() => handleBoxPress(detection.id)}
-              resolveName={resolveName}
-            />
-          ))}
-        </View>
       </KeyboardAvoidingView>
 
       <View

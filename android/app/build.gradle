@@ -112,8 +112,8 @@ android {
         applicationId "org.ganesha.elebook"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1787551545
-        versionName "0.1.0-field.4"
+        versionCode 1787551546
+        versionName "0.1.0-field.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // Consumed by react-native-app-auth's bundled RedirectUriReceiverActivity
         // to catch the org.ganesha.elebook://oauthredirect callback from the

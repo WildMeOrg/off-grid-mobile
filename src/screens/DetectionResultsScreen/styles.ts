@@ -30,10 +30,47 @@ export const createStyles = (colors: ThemeColors, _shadows: ThemeShadows) => ({
   },
   overlayContainer: {
     position: 'absolute' as const,
+  },
+  photoFallback: {
+    position: 'absolute' as const,
     top: 0,
-    left: 0,
     right: 0,
     bottom: 0,
+    left: 0,
+    padding: SPACING.lg,
+    gap: SPACING.md,
+    backgroundColor: colors.background,
+  },
+  photoStatus: {
+    ...TYPOGRAPHY.body,
+    color: colors.textSecondary,
+  },
+  photoRetry: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    alignSelf: 'flex-start' as const,
+    paddingVertical: SPACING.md,
+    gap: SPACING.sm,
+  },
+  photoActionText: {
+    ...TYPOGRAPHY.body,
+    color: colors.primary,
+  },
+  photoReviewList: {
+    flex: 1,
+  },
+  photoReviewRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    paddingVertical: SPACING.md,
+    gap: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  photoReviewText: {
+    ...TYPOGRAPHY.body,
+    color: colors.text,
+    flex: 1,
   },
   footer: {
     paddingHorizontal: SPACING.lg,
