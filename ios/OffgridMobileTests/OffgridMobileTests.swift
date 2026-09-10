@@ -918,10 +918,23 @@ final class ImageTensorModuleTests: XCTestCase {
   // For any rotated photo that put the detector and the crop on different
   // grids, so MiewID embedded the wrong pixels while the overlay looked fine.
 
+  /// A renderer pinned to scale 1, so the backing buffer is exactly the
+  /// requested pixel size. The default format uses the screen scale, which
+  /// would make a "4x2" image an 8x4 or 12x6 buffer and break the dimension
+  /// assertions below on a 2x or 3x simulator.
+  private func unscaledRenderer(width: Int, height: Int) -> UIGraphicsImageRenderer {
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    format.opaque = true
+    return UIGraphicsImageRenderer(
+      size: CGSize(width: width, height: height),
+      format: format
+    )
+  }
+
   /// Left half and right half differ, so a rotation shows up in the pixels.
   private func makeSplitImage(width: Int, height: Int) -> UIImage {
-    let size = CGSize(width: width, height: height)
-    return UIGraphicsImageRenderer(size: size).image { ctx in
+    return unscaledRenderer(width: width, height: height).image { ctx in
       UIColor.red.setFill()
       ctx.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
       UIColor.blue.setFill()
@@ -991,7 +1004,7 @@ final class ImageTensorModuleTests: XCTestCase {
     }
 
     // The same scene already stored upright: red on top, blue below.
-    let reference = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 4)).image { ctx in
+    let reference = unscaledRenderer(width: 2, height: 4).image { ctx in
       UIColor.red.setFill()
       ctx.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
       UIColor.blue.setFill()
