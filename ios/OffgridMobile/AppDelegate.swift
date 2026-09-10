@@ -41,6 +41,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, RNAppAuthAuthorizationFlo
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    guard Self.shouldStartReactNative(
+      environment: ProcessInfo.processInfo.environment,
+      testRuntimeLoaded: NSClassFromString("XCTestCase") != nil
+    ) else {
+      return true
+    }
+
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
@@ -57,6 +64,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate, RNAppAuthAuthorizationFlo
     )
 
     return true
+  }
+
+  static func shouldStartReactNative(
+    environment: [String: String],
+    testRuntimeLoaded: Bool
+  ) -> Bool {
+#if DEBUG
+    return environment["XCTestConfigurationFilePath"] == nil && !testRuntimeLoaded
+#else
+    return true
+#endif
   }
 }
 

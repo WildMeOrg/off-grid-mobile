@@ -734,6 +734,29 @@ final class DownloadManagerModuleTests: XCTestCase {
 /// the build itself would fail — making this test a compile-time guard.
 final class AppDelegateBackgroundSessionTests: XCTestCase {
 
+  @MainActor
+  func testNormalLaunchStillStartsReactNative() {
+    XCTAssertTrue(AppDelegate.shouldStartReactNative(environment: [:], testRuntimeLoaded: false))
+  }
+
+  @MainActor
+  func testNativeTestMarkersSkipReactNativeStartup() {
+    XCTAssertFalse(AppDelegate.shouldStartReactNative(
+      environment: ["XCTestConfigurationFilePath": "/tmp/native.xctestconfiguration"],
+      testRuntimeLoaded: false
+    ))
+    XCTAssertFalse(AppDelegate.shouldStartReactNative(environment: [:], testRuntimeLoaded: true))
+  }
+
+  @MainActor
+  func testNativeTestHostDoesNotCreateAReactRuntime() {
+    let delegate = AppDelegate()
+    XCTAssertTrue(delegate.application(UIApplication.shared, didFinishLaunchingWithOptions: nil))
+    XCTAssertNil(delegate.reactNativeFactory)
+    XCTAssertNil(delegate.reactNativeDelegate)
+    XCTAssertNil(delegate.window)
+  }
+
   func testAppDelegateRespondsToBackgroundURLSessionSelector() {
     let appDelegate = AppDelegate()
     let responds = appDelegate.responds(
