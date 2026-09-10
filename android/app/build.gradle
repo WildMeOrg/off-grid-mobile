@@ -112,8 +112,8 @@ android {
         applicationId "org.ganesha.elebook"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1787551546
-        versionName "0.1.0-field.5"
+        versionCode 1787551547
+        versionName "0.1.0-field.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // Consumed by react-native-app-auth's bundled RedirectUriReceiverActivity
         // to catch the org.ganesha.elebook://oauthredirect callback from the
@@ -190,6 +190,10 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // EXIF orientation: the detector, the crop, and the on-screen photo
+    // must all agree on one upright pixel grid.
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")

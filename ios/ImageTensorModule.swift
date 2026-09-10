@@ -71,7 +71,8 @@ class ImageTensorModule: NSObject {
     rejecter reject: @escaping RCTPromiseRejectBlock
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
-      guard let image = Self.loadImage(from: uri), let cgImage = image.cgImage else {
+      guard let image = Self.loadImage(from: uri),
+            let cgImage = Self.uprightImage(image)?.cgImage else {
         reject("IMAGE_ERROR", "Could not load image: \(uri)", nil)
         return
       }
@@ -133,6 +134,29 @@ class ImageTensorModule: NSObject {
     }
 
     return nil
+  }
+
+  /// Redraw an image onto the upright grid described by its EXIF orientation.
+  ///
+  /// `UIImage.cgImage` is the raw stored buffer and ignores `imageOrientation`,
+  /// while `imageToTensor` goes through `resizeImage`, whose `draw(in:)` honours
+  /// it. Cropping the raw buffer therefore cuts from the wrong region for any
+  /// rotated photo: the on-screen box looks right while the crop MiewID embeds
+  /// is wrong. Normalising here puts the crop on the same grid as the detector,
+  /// the overlay, and every EXIF-aware viewer.
+  ///
+  /// Returns the input unchanged when it is already upright.
+  static func uprightImage(_ image: UIImage) -> UIImage? {
+    if image.imageOrientation == .up {
+      return image
+    }
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = image.scale
+    format.opaque = false
+    let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+    return renderer.image { _ in
+      image.draw(in: CGRect(origin: .zero, size: image.size))
+    }
   }
 
   static func resizeImage(_ image: UIImage, to size: CGSize) -> UIImage? {

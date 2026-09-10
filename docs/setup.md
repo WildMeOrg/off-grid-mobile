@@ -62,6 +62,15 @@ Tokens use OS secure storage. The storage namespace is a fixed prefix plus a SHA
 
 See [deployment configuration](../src/config/deployment.ts) and [token handling](../src/services/entraAuthService.ts) for the implementation.
 
+## Existing photo observations
+
+The EXIF orientation fix applies to newly processed photos: the detector tensor
+and saved crop use the same upright image coordinates as the displayed photo.
+Existing observations, bounding boxes, crops, embeddings, and review decisions
+are not recomputed or migrated. A previously incorrect crop or match does not
+become correct merely by upgrading; inspect affected records before syncing.
+Do not clear application data or silently reprocess existing field records.
+
 ## Local passphrase locks
 
 The local lock uses a versioned PBKDF2-HMAC-SHA-256 verifier with 600,000 iterations and a native-generated salt. `react-native-get-random-values` must be linked in the native app; salts use its native interface directly, without the JavaScript debugger fallback. Missing native randomness fails lock creation or migration rather than using a weaker source.

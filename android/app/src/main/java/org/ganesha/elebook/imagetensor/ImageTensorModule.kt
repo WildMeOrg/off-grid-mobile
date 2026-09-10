@@ -2,7 +2,9 @@ package org.ganesha.elebook.imagetensor
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -102,6 +104,47 @@ class ImageTensorModule(reactContext: ReactApplicationContext) :
             }
 
             return output
+        }
+
+        /**
+         * Re-orient a decoded bitmap into the upright grid that EXIF-aware
+         * viewers display.
+         *
+         * `BitmapFactory` returns the stored sensor pixels and ignores the EXIF
+         * orientation tag, while React Native's <Image> (Fresco, autoRotate) and
+         * every photo viewer apply it. Without this step the detector normalizes
+         * boxes against one grid and the UI draws them on another, so boxes are
+         * transposed on screen and crops -- the pixels MiewID actually embeds --
+         * are cut from the wrong region. Applying the tag once, here, keeps the
+         * detector, the overlay, and the crop on a single coordinate frame.
+         *
+         * Returns the input untouched when no transform is needed; otherwise a
+         * new bitmap. Callers own recycling the input.
+         *
+         * Exposed for unit testing.
+         */
+        fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+            val matrix = Matrix()
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+                ExifInterface.ORIENTATION_TRANSPOSE -> {
+                    matrix.postRotate(90f)
+                    matrix.postScale(-1f, 1f)
+                }
+                ExifInterface.ORIENTATION_TRANSVERSE -> {
+                    matrix.postRotate(270f)
+                    matrix.postScale(-1f, 1f)
+                }
+                // ORIENTATION_NORMAL, ORIENTATION_UNDEFINED, anything unknown.
+                else -> return bitmap
+            }
+            return Bitmap.createBitmap(
+                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true,
+            )
         }
 
         /**
@@ -208,7 +251,22 @@ class ImageTensorModule(reactContext: ReactApplicationContext) :
         }.start()
     }
 
+    /**
+     * Decode an image and return it on the upright display grid.
+     *
+     * Every consumer in this module -- the detector tensor and the saved crop --
+     * goes through here, so they cannot disagree about orientation.
+     */
     private fun loadBitmap(uri: String): Bitmap? {
+        val decoded = decodeBitmap(uri) ?: return null
+        val upright = applyExifOrientation(decoded, readExifOrientation(uri))
+        if (upright !== decoded) {
+            decoded.recycle()
+        }
+        return upright
+    }
+
+    private fun decodeBitmap(uri: String): Bitmap? {
         return try {
             val parsed = Uri.parse(uri)
             when (parsed.scheme) {
@@ -226,6 +284,31 @@ class ImageTensorModule(reactContext: ReactApplicationContext) :
             }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /**
+     * Read the EXIF orientation tag, defaulting to NORMAL when the image has no
+     * tag or cannot be parsed. An unreadable tag must not fail the capture.
+     */
+    private fun readExifOrientation(uri: String): Int {
+        return try {
+            val parsed = Uri.parse(uri)
+            val exif = when (parsed.scheme) {
+                "content" -> {
+                    reactApplicationContext.contentResolver.openInputStream(parsed)?.use { stream ->
+                        ExifInterface(stream)
+                    }
+                }
+                "file" -> parsed.path?.let { ExifInterface(it) }
+                else -> if (File(uri).exists()) ExifInterface(uri) else null
+            }
+            exif?.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            ) ?: ExifInterface.ORIENTATION_NORMAL
+        } catch (_: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
         }
     }
 }
