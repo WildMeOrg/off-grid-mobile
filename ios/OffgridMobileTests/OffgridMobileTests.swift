@@ -1,5 +1,7 @@
 import XCTest
 import PDFKit
+import ImageIO
+import UniformTypeIdentifiers
 
 @testable import OffgridMobile
 
@@ -734,6 +736,29 @@ final class DownloadManagerModuleTests: XCTestCase {
 /// the build itself would fail — making this test a compile-time guard.
 final class AppDelegateBackgroundSessionTests: XCTestCase {
 
+  @MainActor
+  func testNormalLaunchStillStartsReactNative() {
+    XCTAssertTrue(AppDelegate.shouldStartReactNative(environment: [:], testRuntimeLoaded: false))
+  }
+
+  @MainActor
+  func testNativeTestMarkersSkipReactNativeStartup() {
+    XCTAssertFalse(AppDelegate.shouldStartReactNative(
+      environment: ["XCTestConfigurationFilePath": "/tmp/native.xctestconfiguration"],
+      testRuntimeLoaded: false
+    ))
+    XCTAssertFalse(AppDelegate.shouldStartReactNative(environment: [:], testRuntimeLoaded: true))
+  }
+
+  @MainActor
+  func testNativeTestHostDoesNotCreateAReactRuntime() {
+    let delegate = AppDelegate()
+    XCTAssertTrue(delegate.application(UIApplication.shared, didFinishLaunchingWithOptions: nil))
+    XCTAssertNil(delegate.reactNativeFactory)
+    XCTAssertNil(delegate.reactNativeDelegate)
+    XCTAssertNil(delegate.window)
+  }
+
   func testAppDelegateRespondsToBackgroundURLSessionSelector() {
     let appDelegate = AppDelegate()
     let responds = appDelegate.responds(
@@ -1017,6 +1042,117 @@ final class ImageTensorModuleTests: XCTestCase {
     XCTAssertEqual(actual.count, expected.count)
     for index in 0..<expected.count {
       XCTAssertEqual(actual[index], expected[index], accuracy: 2.0, "channel \(index)")
+    }
+  }
+
+  private let uprightQuadrants = [
+    [0, 1, 2, 3],
+    [1, 0, 3, 2],
+    [3, 2, 1, 0],
+    [2, 3, 0, 1],
+    [0, 2, 1, 3],
+    [2, 0, 3, 1],
+    [3, 1, 2, 0],
+    [1, 3, 0, 2]
+  ]
+
+  private func writeExifFixture(to url: URL, orientation: Int) throws {
+    let colors: [UIColor] = [.red, .green, .blue, .yellow]
+    let image = unscaledRenderer(width: 80, height: 40).image { context in
+      for (index, color) in colors.enumerated() {
+        color.setFill()
+        context.fill(CGRect(x: (index % 2) * 40, y: (index / 2) * 20, width: 40, height: 20))
+      }
+    }
+    let cgImage = try XCTUnwrap(image.cgImage)
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(
+      url as CFURL, UTType.jpeg.identifier as CFString, 1, nil
+    ))
+    let properties: [CFString: Any] = [
+      kCGImagePropertyOrientation: orientation,
+      kCGImageDestinationLossyCompressionQuality: 1.0
+    ]
+    CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+    let saved = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+    XCTAssertEqual((saved[kCGImagePropertyOrientation] as? NSNumber)?.intValue, orientation)
+  }
+
+  private func assertColor(_ tensor: [Double], pixel: Int, planeSize: Int, color: Int, orientation: Int) {
+    let expected: [[Double]] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]]
+    XCTAssertEqual(tensor.count, 3 * planeSize)
+    guard tensor.count == 3 * planeSize else { return }
+    for channel in 0..<3 {
+      XCTAssertEqual(tensor[channel * planeSize + pixel], expected[color][channel], accuracy: 20,
+                     "EXIF \(orientation), pixel \(pixel), channel \(channel)")
+    }
+  }
+
+  func testCropImageUsesUprightPixelsForEveryExifOrientation() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    for orientation in 1...8 {
+      let source = directory.appendingPathComponent("source-\(orientation).jpg")
+      let output = directory.appendingPathComponent("crop-\(orientation).jpg")
+      try writeExifFixture(to: source, orientation: orientation)
+      let completed = expectation(description: "crop EXIF \(orientation)")
+      module.cropImage(
+        source.absoluteString, x: 0, y: 0, width: 0.5, height: 0.5, outputPath: output.path,
+        resolver: { value in
+          XCTAssertEqual(value as? String, output.path)
+          completed.fulfill()
+        },
+        rejecter: { _, message, _ in
+          XCTFail("EXIF \(orientation) crop rejected: \(message ?? "unknown")")
+          completed.fulfill()
+        }
+      )
+      waitForExpectations(timeout: 5)
+      let crop = try XCTUnwrap(UIImage(contentsOfFile: output.path))
+      let pixels = try XCTUnwrap(crop.cgImage)
+      let width = orientation >= 5 ? 20 : 40
+      let height = orientation >= 5 ? 40 : 20
+      XCTAssertEqual(pixels.width, width)
+      XCTAssertEqual(pixels.height, height)
+      XCTAssertEqual(crop.imageOrientation, .up)
+      let tensor = channels(of: crop, width: width, height: height)
+      assertColor(tensor, pixel: (height / 2) * width + width / 2, planeSize: width * height,
+                  color: uprightQuadrants[orientation - 1][0], orientation: orientation)
+    }
+  }
+
+  func testImageToTensorUsesUprightPixelsForEveryExifOrientation() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    for orientation in 1...8 {
+      let source = directory.appendingPathComponent("tensor-\(orientation).jpg")
+      try writeExifFixture(to: source, orientation: orientation)
+      let completed = expectation(description: "tensor EXIF \(orientation)")
+      var tensor: [Double]?
+      module.imageToTensor(
+        source.path, width: 16, height: 16, mean: [0, 0, 0], std: [1, 1, 1],
+        scale: 1.0, channelOrder: "RGB",
+        resolver: { value in
+          tensor = value as? [Double]
+          completed.fulfill()
+        },
+        rejecter: { _, message, _ in
+          XCTFail("EXIF \(orientation) tensor rejected: \(message ?? "unknown")")
+          completed.fulfill()
+        }
+      )
+      waitForExpectations(timeout: 5)
+      let values = try XCTUnwrap(tensor)
+      for quadrant in 0..<4 {
+        let pixel = (4 + (quadrant / 2) * 8) * 16 + 4 + (quadrant % 2) * 8
+        assertColor(values, pixel: pixel, planeSize: 256,
+                    color: uprightQuadrants[orientation - 1][quadrant], orientation: orientation)
+      }
     }
   }
 

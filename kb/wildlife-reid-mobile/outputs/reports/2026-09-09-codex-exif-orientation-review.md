@@ -27,7 +27,7 @@ bug and is unrelated to this one.
 | # | Severity | Finding | Disposition |
 |---|---|---|---|
 | 1 | Major | iOS fixtures used the renderer's default screen scale while rewrapping the buffer at `scale: 1`, so a "4x2" image is 8x4 or 12x6 on a 2x/3x simulator and the dimension assertions fail despite correct production code. | **Fixed.** Both fixtures now render through a renderer pinned to scale 1. Found independently before reading the review. |
-| 2 | Major | Every orientation test called `applyExifOrientation` / `uprightImage` directly, so removing the call from `loadBitmap` or `cropImage` would have left them all green. | **Fixed for Android.** Added an end-to-end test through the `cropImage` bridge method with a real EXIF-tagged JPEG. Verified by unwiring `loadBitmap`: exactly that test fails, then passes when restored. **Open for iOS** (see below). |
+| 2 | Major | Every orientation test called `applyExifOrientation` / `uprightImage` directly, so removing the call from `loadBitmap` or `cropImage` would have left them all green. | **Android verified.** Added an end-to-end `cropImage` test with a real EXIF-tagged JPEG; unwiring `loadBitmap` made that test fail. **iOS follow-up added:** real tagged JPEGs for all eight orientations through `cropImage` and `imageToTensor`, checking upright dimensions and independently specified quadrant colors. macOS CI is the required execution gate. |
 | 3 | Minor | Exceptional paths skip bitmap recycling: a transform failure leaks the decoded bitmap, a tensor failure leaks the caller's, a crop or file-write failure leaks both. Successful-path ownership is correct, with no double-recycle or use-after-recycle. | **Deferred.** GC reclaims these; deterministic release is a behaviour change that needs its own tests. Worth a follow-up. |
 | 4 | Minor | Crop quantization still differs across platforms: Android truncates origin and extent independently, iOS passes fractional bounds to Core Graphics, which expands to integral bounds. For `x=1.5, width=2.5` Android selects `[1,3)` and iOS `[1,4)`. | **Deferred, pre-existing.** Not an EXIF error. Fix is a shared integer-bound calculation on both platforms. |
 | 5 | Correct | All eight Android transforms and every stored fixture verified against an independently derived source-to-upright pixel mapping table, including the `FₓR90 = TRANSPOSE` and `FₓR270 = TRANSVERSE` post-multiplication order. | No action. |
@@ -51,19 +51,30 @@ against an unwired `loadBitmap`.
 
 ## Open gaps
 
-- **The iOS tests have never been executed.** This host has no `xcodebuild` and
-  no Swift toolchain, and the CI workflow has no iOS test job. They need a run
-  on a Mac before merge.
-- **No iOS call-site test.** Codex finding 2 is closed for Android only. The
-  equivalent Swift test needs `CGImageDestination` with EXIF properties, which
-  would be more unverifiable code on this host.
+- **The local review hosts have no Xcode.** However, `.github/workflows/ci.yml`
+  already runs `npm test` on macOS, including native iOS tests through
+  `scripts/run-apple-check.js`. Do not add a duplicate iOS test job.
+- **The first PR35 CI run was not green.** Run `34443887005` executed and passed
+  all three new helper-level orientation tests, then reported overall failure
+  after an unexpected exit associated with
+  `DownloadManagerModuleTests.testCompletedDownloadEntryPersistsUntilMoved()`.
+  Logs show the debug test host attempting React Native startup without Metro
+  or a bundled script. This was not a Hermes compile failure or an EXIF assertion.
+- **Native-host isolation and bridge tests need macOS verification.** The
+  follow-up skips React startup only in debug native XCTest hosts, with tests
+  for normal-launch policy and the actual delegate path. Tagged JPEG bridge
+  tests cover all eight orientation values; a successful new CI run is required
+  before acceptance. Native tests are not silently skipped on Windows.
 - **The Android `content://` path is untested.** Only the plain file path is
   covered; the gallery path needs an instrumented test.
-- **CI has no iOS test job at all.** Worth adding independently of this change.
+- **Physical camera/gallery validation is still required.** Helper and bridge
+  tests do not replace checking the full capture, detector, overlay, and crop
+  flow with tagged photos on devices.
 
 ## Follow-ups worth filing
 
-1. Add an iOS test job to the CI workflow, then run the Swift tests.
+1. Require a green existing macOS test job, including the tagged-image bridge
+   and native-host tests, before merging.
 2. Deterministic bitmap release on exceptional paths (finding 3).
 3. Shared integer crop-bound calculation across platforms (finding 4).
 4. Downsample at decode. `applyExifOrientation` allocates a second
