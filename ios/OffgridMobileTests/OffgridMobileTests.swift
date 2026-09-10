@@ -911,6 +911,102 @@ final class ImageTensorModuleTests: XCTestCase {
 
   // -- Helpers --
 
+  // MARK: - EXIF orientation parity
+  //
+  // `imageToTensor` goes through `resizeImage`, whose `draw(in:)` applies
+  // `imageOrientation`; `cropImage` used the raw `cgImage`, which does not.
+  // For any rotated photo that put the detector and the crop on different
+  // grids, so MiewID embedded the wrong pixels while the overlay looked fine.
+
+  /// Left half and right half differ, so a rotation shows up in the pixels.
+  private func makeSplitImage(width: Int, height: Int) -> UIImage {
+    let size = CGSize(width: width, height: height)
+    return UIGraphicsImageRenderer(size: size).image { ctx in
+      UIColor.red.setFill()
+      ctx.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+      UIColor.blue.setFill()
+      ctx.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+    }
+  }
+
+  /// Raw 0-255 channel values via the module's own extractor, as NCHW.
+  private func channels(of image: UIImage, width: Int, height: Int) -> [Double] {
+    guard let cgImage = image.cgImage else { return [] }
+    return ImageTensorModule.extractNchw(
+      from: cgImage,
+      width: width,
+      height: height,
+      mean: [0, 0, 0],
+      std: [1, 1, 1],
+      scale: 1.0,
+      bgr: false
+    ) ?? []
+  }
+
+  private func red(_ nchw: [Double], x: Int, y: Int, width: Int, height: Int) -> Double {
+    return nchw[y * width + x]
+  }
+
+  private func blue(_ nchw: [Double], x: Int, y: Int, width: Int, height: Int) -> Double {
+    return nchw[2 * height * width + y * width + x]
+  }
+
+  func testUprightImageLeavesAnAlreadyUprightImageUnchanged() {
+    let image = makeSplitImage(width: 4, height: 2)
+
+    let result = ImageTensorModule.uprightImage(image)
+
+    XCTAssertEqual(result?.size.width, 4)
+    XCTAssertEqual(result?.size.height, 2)
+  }
+
+  func testUprightImageRotatesARightOrientedImageOntoTheDisplayGrid() {
+    // A sensor buffer that must be turned 90 degrees clockwise to display.
+    let stored = makeSplitImage(width: 4, height: 2)
+    let tagged = UIImage(cgImage: stored.cgImage!, scale: 1, orientation: .right)
+
+    guard let upright = ImageTensorModule.uprightImage(tagged) else {
+      return XCTFail("uprightImage returned nil")
+    }
+
+    XCTAssertEqual(upright.size.width, 2, "width and height should swap")
+    XCTAssertEqual(upright.size.height, 4)
+
+    // Turning clockwise sends the red left half to the top.
+    let px = channels(of: upright, width: 2, height: 4)
+    XCTAssertGreaterThan(red(px, x: 0, y: 0, width: 2, height: 4), 200)
+    XCTAssertLessThan(blue(px, x: 0, y: 0, width: 2, height: 4), 55)
+    XCTAssertLessThan(red(px, x: 0, y: 3, width: 2, height: 4), 55)
+    XCTAssertGreaterThan(blue(px, x: 0, y: 3, width: 2, height: 4), 200)
+  }
+
+  /// MiewID matchability guard: the pixels the model receives must not depend
+  /// on how the photo happened to be stored.
+  func testRotatedSourceYieldsTheSameGridAsAnUprightSource() {
+    let stored = makeSplitImage(width: 4, height: 2)
+    let tagged = UIImage(cgImage: stored.cgImage!, scale: 1, orientation: .right)
+
+    guard let fromExif = ImageTensorModule.uprightImage(tagged) else {
+      return XCTFail("uprightImage returned nil")
+    }
+
+    // The same scene already stored upright: red on top, blue below.
+    let reference = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 4)).image { ctx in
+      UIColor.red.setFill()
+      ctx.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      UIColor.blue.setFill()
+      ctx.fill(CGRect(x: 0, y: 2, width: 2, height: 2))
+    }
+
+    let actual = channels(of: fromExif, width: 2, height: 4)
+    let expected = channels(of: reference, width: 2, height: 4)
+
+    XCTAssertEqual(actual.count, expected.count)
+    for index in 0..<expected.count {
+      XCTAssertEqual(actual[index], expected[index], accuracy: 2.0, "channel \(index)")
+    }
+  }
+
   private func createTestImage(width: Int, height: Int, color: UIColor) -> UIImage {
     let size = CGSize(width: width, height: height)
     let renderer = UIGraphicsImageRenderer(size: size)
