@@ -1,5 +1,7 @@
 import XCTest
 import PDFKit
+import ImageIO
+import UniformTypeIdentifiers
 
 @testable import OffgridMobile
 
@@ -939,6 +941,226 @@ final class ImageTensorModuleTests: XCTestCase {
   }
 
   // -- Helpers --
+
+  // MARK: - EXIF orientation parity
+  //
+  // `imageToTensor` goes through `resizeImage`, whose `draw(in:)` applies
+  // `imageOrientation`; `cropImage` used the raw `cgImage`, which does not.
+  // For any rotated photo that put the detector and the crop on different
+  // grids, so MiewID embedded the wrong pixels while the overlay looked fine.
+
+  /// A renderer pinned to scale 1, so the backing buffer is exactly the
+  /// requested pixel size. The default format uses the screen scale, which
+  /// would make a "4x2" image an 8x4 or 12x6 buffer and break the dimension
+  /// assertions below on a 2x or 3x simulator.
+  private func unscaledRenderer(width: Int, height: Int) -> UIGraphicsImageRenderer {
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    format.opaque = true
+    return UIGraphicsImageRenderer(
+      size: CGSize(width: width, height: height),
+      format: format
+    )
+  }
+
+  /// Left half and right half differ, so a rotation shows up in the pixels.
+  private func makeSplitImage(width: Int, height: Int) -> UIImage {
+    return unscaledRenderer(width: width, height: height).image { ctx in
+      UIColor.red.setFill()
+      ctx.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+      UIColor.blue.setFill()
+      ctx.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+    }
+  }
+
+  /// Raw 0-255 channel values via the module's own extractor, as NCHW.
+  private func channels(of image: UIImage, width: Int, height: Int) -> [Double] {
+    guard let cgImage = image.cgImage else { return [] }
+    return ImageTensorModule.extractNchw(
+      from: cgImage,
+      width: width,
+      height: height,
+      mean: [0, 0, 0],
+      std: [1, 1, 1],
+      scale: 1.0,
+      bgr: false
+    ) ?? []
+  }
+
+  private func red(_ nchw: [Double], x: Int, y: Int, width: Int, height: Int) -> Double {
+    return nchw[y * width + x]
+  }
+
+  private func blue(_ nchw: [Double], x: Int, y: Int, width: Int, height: Int) -> Double {
+    return nchw[2 * height * width + y * width + x]
+  }
+
+  func testUprightImageLeavesAnAlreadyUprightImageUnchanged() {
+    let image = makeSplitImage(width: 4, height: 2)
+
+    let result = ImageTensorModule.uprightImage(image)
+
+    XCTAssertEqual(result?.size.width, 4)
+    XCTAssertEqual(result?.size.height, 2)
+  }
+
+  func testUprightImageRotatesARightOrientedImageOntoTheDisplayGrid() {
+    // A sensor buffer that must be turned 90 degrees clockwise to display.
+    let stored = makeSplitImage(width: 4, height: 2)
+    let tagged = UIImage(cgImage: stored.cgImage!, scale: 1, orientation: .right)
+
+    guard let upright = ImageTensorModule.uprightImage(tagged) else {
+      return XCTFail("uprightImage returned nil")
+    }
+
+    XCTAssertEqual(upright.size.width, 2, "width and height should swap")
+    XCTAssertEqual(upright.size.height, 4)
+
+    // Turning clockwise sends the red left half to the top.
+    let px = channels(of: upright, width: 2, height: 4)
+    XCTAssertGreaterThan(red(px, x: 0, y: 0, width: 2, height: 4), 200)
+    XCTAssertLessThan(blue(px, x: 0, y: 0, width: 2, height: 4), 55)
+    XCTAssertLessThan(red(px, x: 0, y: 3, width: 2, height: 4), 55)
+    XCTAssertGreaterThan(blue(px, x: 0, y: 3, width: 2, height: 4), 200)
+  }
+
+  /// MiewID matchability guard: the pixels the model receives must not depend
+  /// on how the photo happened to be stored.
+  func testRotatedSourceYieldsTheSameGridAsAnUprightSource() {
+    let stored = makeSplitImage(width: 4, height: 2)
+    let tagged = UIImage(cgImage: stored.cgImage!, scale: 1, orientation: .right)
+
+    guard let fromExif = ImageTensorModule.uprightImage(tagged) else {
+      return XCTFail("uprightImage returned nil")
+    }
+
+    // The same scene already stored upright: red on top, blue below.
+    let reference = unscaledRenderer(width: 2, height: 4).image { ctx in
+      UIColor.red.setFill()
+      ctx.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      UIColor.blue.setFill()
+      ctx.fill(CGRect(x: 0, y: 2, width: 2, height: 2))
+    }
+
+    let actual = channels(of: fromExif, width: 2, height: 4)
+    let expected = channels(of: reference, width: 2, height: 4)
+
+    XCTAssertEqual(actual.count, expected.count)
+    for index in 0..<expected.count {
+      XCTAssertEqual(actual[index], expected[index], accuracy: 2.0, "channel \(index)")
+    }
+  }
+
+  private let uprightQuadrants = [
+    [0, 1, 2, 3],
+    [1, 0, 3, 2],
+    [3, 2, 1, 0],
+    [2, 3, 0, 1],
+    [0, 2, 1, 3],
+    [2, 0, 3, 1],
+    [3, 1, 2, 0],
+    [1, 3, 0, 2]
+  ]
+
+  private func writeExifFixture(to url: URL, orientation: Int) throws {
+    let colors: [UIColor] = [.red, .green, .blue, .yellow]
+    let image = unscaledRenderer(width: 80, height: 40).image { context in
+      for (index, color) in colors.enumerated() {
+        color.setFill()
+        context.fill(CGRect(x: (index % 2) * 40, y: (index / 2) * 20, width: 40, height: 20))
+      }
+    }
+    let cgImage = try XCTUnwrap(image.cgImage)
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(
+      url as CFURL, UTType.jpeg.identifier as CFString, 1, nil
+    ))
+    let properties: [CFString: Any] = [
+      kCGImagePropertyOrientation: orientation,
+      kCGImageDestinationLossyCompressionQuality: 1.0
+    ]
+    CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+    let saved = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+    XCTAssertEqual((saved[kCGImagePropertyOrientation] as? NSNumber)?.intValue, orientation)
+  }
+
+  private func assertColor(_ tensor: [Double], pixel: Int, planeSize: Int, color: Int, orientation: Int) {
+    let expected: [[Double]] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]]
+    XCTAssertEqual(tensor.count, 3 * planeSize)
+    guard tensor.count == 3 * planeSize else { return }
+    for channel in 0..<3 {
+      XCTAssertEqual(tensor[channel * planeSize + pixel], expected[color][channel], accuracy: 20,
+                     "EXIF \(orientation), pixel \(pixel), channel \(channel)")
+    }
+  }
+
+  func testCropImageUsesUprightPixelsForEveryExifOrientation() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    for orientation in 1...8 {
+      let source = directory.appendingPathComponent("source-\(orientation).jpg")
+      let output = directory.appendingPathComponent("crop-\(orientation).jpg")
+      try writeExifFixture(to: source, orientation: orientation)
+      let completed = expectation(description: "crop EXIF \(orientation)")
+      module.cropImage(
+        source.absoluteString, x: 0, y: 0, width: 0.5, height: 0.5, outputPath: output.path,
+        resolver: { value in
+          XCTAssertEqual(value as? String, output.path)
+          completed.fulfill()
+        },
+        rejecter: { _, message, _ in
+          XCTFail("EXIF \(orientation) crop rejected: \(message ?? "unknown")")
+          completed.fulfill()
+        }
+      )
+      waitForExpectations(timeout: 5)
+      let crop = try XCTUnwrap(UIImage(contentsOfFile: output.path))
+      let pixels = try XCTUnwrap(crop.cgImage)
+      let width = orientation >= 5 ? 20 : 40
+      let height = orientation >= 5 ? 40 : 20
+      XCTAssertEqual(pixels.width, width)
+      XCTAssertEqual(pixels.height, height)
+      XCTAssertEqual(crop.imageOrientation, .up)
+      let tensor = channels(of: crop, width: width, height: height)
+      assertColor(tensor, pixel: (height / 2) * width + width / 2, planeSize: width * height,
+                  color: uprightQuadrants[orientation - 1][0], orientation: orientation)
+    }
+  }
+
+  func testImageToTensorUsesUprightPixelsForEveryExifOrientation() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    for orientation in 1...8 {
+      let source = directory.appendingPathComponent("tensor-\(orientation).jpg")
+      try writeExifFixture(to: source, orientation: orientation)
+      let completed = expectation(description: "tensor EXIF \(orientation)")
+      var tensor: [Double]?
+      module.imageToTensor(
+        source.path, width: 16, height: 16, mean: [0, 0, 0], std: [1, 1, 1],
+        scale: 1.0, channelOrder: "RGB",
+        resolver: { value in
+          tensor = value as? [Double]
+          completed.fulfill()
+        },
+        rejecter: { _, message, _ in
+          XCTFail("EXIF \(orientation) tensor rejected: \(message ?? "unknown")")
+          completed.fulfill()
+        }
+      )
+      waitForExpectations(timeout: 5)
+      let values = try XCTUnwrap(tensor)
+      for quadrant in 0..<4 {
+        let pixel = (4 + (quadrant / 2) * 8) * 16 + 4 + (quadrant % 2) * 8
+        assertColor(values, pixel: pixel, planeSize: 256,
+                    color: uprightQuadrants[orientation - 1][quadrant], orientation: orientation)
+      }
+    }
+  }
 
   private func createTestImage(width: Int, height: Int, color: UIColor) -> UIImage {
     let size = CGSize(width: width, height: height)
