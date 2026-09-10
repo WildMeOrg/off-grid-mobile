@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Image, View } from 'react-native';
+import { FlatList, Image, Text, TouchableOpacity, View } from 'react-native';
+import Icon from 'react-native-vector-icons/Feather';
 import type { Detection } from '../../types/wildlife';
-import { useThemedStyles } from '../../theme';
+import { useThemedStyles, useTheme } from '../../theme';
 import { toDisplayUri } from '../../utils/imageUri';
 import { BoundingBoxOverlay } from './BoundingBoxOverlay';
 import { createStyles } from './styles';
@@ -38,24 +39,38 @@ export const DetectionPhoto: React.FC<DetectionPhotoProps> = ({
   photoUri, detections, onBoxPress, resolveName,
 }) => {
   const styles = useThemedStyles(createStyles);
+  const { colors } = useTheme();
   const [layout, setLayout] = useState<ImageSize | null>(null);
-  const [imageSize, setImageSize] = useState<ImageSize | null>(null);
-  const frame = containedFrame(layout, imageSize);
+  const [image, setImage] = useState<{
+    attempt: number;
+    size: ImageSize | null;
+    failed: boolean;
+  }>({ attempt: 0, size: null, failed: false });
+  const { attempt } = image;
+  const frame = containedFrame(layout, image.size);
 
   return (
     <>
-      <Image
-        source={{ uri: toDisplayUri(photoUri) }}
-        style={styles.photo}
-        resizeMode="contain"
-        testID="observation-photo"
-        onLayout={({ nativeEvent }) => setLayout(nativeEvent.layout)}
-        onLoad={({ nativeEvent }) => setImageSize({
-          width: nativeEvent.source.width,
-          height: nativeEvent.source.height,
-        })}
-        onError={() => setImageSize(null)}
-      />
+      {photoUri ? (
+        <Image
+          key={attempt}
+          source={{ uri: toDisplayUri(photoUri) }}
+          style={styles.photo}
+          resizeMode="contain"
+          testID="observation-photo"
+          onLayout={({ nativeEvent }) => setLayout(nativeEvent.layout)}
+          onLoad={({ nativeEvent }) => {
+            const { width, height } = nativeEvent.source;
+            const valid = [width, height].every(value => Number.isFinite(value) && value > 0);
+            setImage(previous => previous.attempt === attempt
+              ? { ...previous, size: valid ? { width, height } : null, failed: !valid }
+              : previous);
+          }}
+          onError={() => setImage(previous => previous.attempt === attempt
+            ? { ...previous, size: null, failed: true }
+            : previous)}
+        />
+      ) : null}
       {frame && (
         <View
           style={[styles.overlayContainer, frame]}
@@ -70,6 +85,44 @@ export const DetectionPhoto: React.FC<DetectionPhotoProps> = ({
               resolveName={resolveName}
             />
           ))}
+        </View>
+      )}
+      {!frame && (
+        <View style={styles.photoFallback}>
+          <Text style={styles.photoStatus} accessibilityRole={image.failed || !photoUri ? 'alert' : undefined}>
+            {image.failed || !photoUri ? 'Photo unavailable' : 'Loading photo'}
+          </Text>
+          {photoUri && image.failed ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Retry photo"
+              style={styles.photoRetry}
+              onPress={() => setImage(previous => ({
+                attempt: previous.attempt + 1, size: null, failed: false,
+              }))}
+            >
+              <Icon name="refresh-cw" size={20} color={colors.primary} />
+              <Text style={styles.photoActionText}>Retry photo</Text>
+            </TouchableOpacity>
+          ) : null}
+          <FlatList
+            data={detections}
+            keyExtractor={detection => detection.id}
+            style={styles.photoReviewList}
+            renderItem={({ item, index }) => (
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={`Review detection ${index + 1}`}
+                style={styles.photoReviewRow}
+                onPress={() => onBoxPress(item.id)}
+              >
+                <Text style={styles.photoReviewText} numberOfLines={2}>
+                  {`Review detection ${index + 1}: ${item.species}`}
+                </Text>
+                <Icon name="chevron-right" size={20} color={colors.text} />
+              </TouchableOpacity>
+            )}
+          />
         </View>
       )}
     </>

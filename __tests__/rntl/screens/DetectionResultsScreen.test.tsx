@@ -373,6 +373,73 @@ describe('DetectionResultsScreen', () => {
     expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
   });
 
+  it.each(['missing', 'failed', 'loading'] as const)(
+    'keeps each detection reviewable when the photo is %s',
+    async state => {
+      mockObservations = [{
+        ...makeObservation([makeDetection(), makeDetection({ id: 'det-2' })]),
+        photoUri: state === 'missing' ? '' : 'file:///test/photo.jpg',
+      }];
+      const screen = renderComponent(<DetectionResultsScreen />);
+      if (state === 'failed') {
+        fireEvent(screen.getByTestId('observation-photo'), 'error', {
+          nativeEvent: { error: 'Decode failed' },
+        });
+      }
+      expect(screen.queryByTestId('bounding-box-det-1')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Review detection 1' })).toBeTruthy();
+      fireEvent.changeText(screen.getByTestId('observation-notes-input'), '  Test notes  ');
+      fireEvent.press(screen.getByRole('button', { name: 'Review detection 2' }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('MatchReview', {
+        observationId: 'obs-1', detectionId: 'det-2',
+      }));
+      expect(mockUpdateObservationNotes).toHaveBeenCalledWith('obs-1', 'Test notes');
+      expect(mockObservations[0].detections[1].matchResult.reviewStatus).toBe('pending');
+    },
+  );
+
+  it('offers a retry after decode failure and restores aligned boxes when it loads', () => {
+    const screen = render(<DetectionResultsScreen />);
+    const oldPhoto = screen.getByTestId('observation-photo');
+    const oldLoad = oldPhoto.props.onLoad;
+    const oldError = oldPhoto.props.onError;
+    fireEvent(screen.getByTestId('observation-photo'), 'error', {
+      nativeEvent: { error: 'Private file path must not be displayed' },
+    });
+    expect(screen.getByText('Photo unavailable')).toBeTruthy();
+    expect(screen.queryByText('Private file path must not be displayed')).toBeNull();
+    expect(screen.queryByTestId('detection-overlay')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'Retry photo' }));
+    expect(screen.queryByText('Photo unavailable')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Review detection 1' })).toBeTruthy();
+    loadPhoto(screen);
+    act(() => {
+      oldError({ nativeEvent: { error: 'Old attempt failed' } });
+      oldLoad({ nativeEvent: { source: { width: 800, height: 1200 } } });
+    });
+    expect(screen.getByTestId('bounding-box-det-1')).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByTestId('detection-overlay').props.style))
+      .toMatchObject({ left: 0, top: 250, width: 600, height: 400 });
+    expect(screen.queryByRole('button', { name: 'Review detection 1' })).toBeNull();
+  });
+
+  it('shows a missing-photo state without a nonfunctional retry', () => {
+    mockObservations = [{ ...makeObservation(), photoUri: '' }];
+    const screen = renderComponent(<DetectionResultsScreen />);
+    expect(screen.getByText('Photo unavailable')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry photo' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Review detection 1' })).toBeTruthy();
+  });
+
+  it('does not bypass note persistence when using fallback review', async () => {
+    mockObservations = [{ ...makeObservation(), photoUri: '' }];
+    mockUpdateObservationNotes.mockRejectedValueOnce(new Error('disk full'));
+    const screen = renderComponent(<DetectionResultsScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'Review detection 1' }));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Could not save observation', 'disk full'));
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   // ==========================================================================
   // Navigation
   // ==========================================================================

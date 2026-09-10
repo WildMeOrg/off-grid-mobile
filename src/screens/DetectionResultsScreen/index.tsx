@@ -153,7 +153,7 @@ export const DetectionResultsScreen: React.FC = () => {
         style={styles.photoContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {observation?.photoUri ? (
+        {observation ? (
           <DetectionPhoto
             key={observation.photoUri}
             photoUri={observation.photoUri}
