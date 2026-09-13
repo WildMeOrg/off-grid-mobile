@@ -25,7 +25,7 @@ class ImageTensorModule: NSObject {
     rejecter reject: @escaping RCTPromiseRejectBlock
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
-      guard let image = Self.loadImage(from: uri) else {
+      guard let source = Self.loadUprightImage(from: uri) else {
         reject("IMAGE_ERROR", "Could not load image: \(uri)", nil)
         return
       }
@@ -33,14 +33,13 @@ class ImageTensorModule: NSObject {
       let targetW = Int(width)
       let targetH = Int(height)
 
-      guard let resized = Self.resizeImage(image, to: CGSize(width: targetW, height: targetH)),
-            let cgImage = resized.cgImage else {
+      guard let resized = Self.progressiveResize(source, width: targetW, height: targetH) else {
         reject("IMAGE_ERROR", "Failed to resize image", nil)
         return
       }
 
       guard let output = Self.extractNchw(
-        from: cgImage,
+        from: resized,
         width: targetW,
         height: targetH,
         mean: mean,
@@ -71,8 +70,7 @@ class ImageTensorModule: NSObject {
     rejecter reject: @escaping RCTPromiseRejectBlock
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
-      guard let image = Self.loadImage(from: uri),
-            let cgImage = Self.uprightImage(image)?.cgImage else {
+      guard let cgImage = Self.loadUprightImage(from: uri) else {
         reject("IMAGE_ERROR", "Could not load image: \(uri)", nil)
         return
       }
@@ -136,14 +134,26 @@ class ImageTensorModule: NSObject {
     return nil
   }
 
+  /// Decode an image and return it on the upright display grid.
+  ///
+  /// Every consumer in this module -- the detector tensor and the saved crop --
+  /// goes through here, so they cannot disagree about orientation. Mirrors
+  /// `loadBitmap` in the Android module.
+  static func loadUprightImage(from uri: String) -> CGImage? {
+    guard let image = loadImage(from: uri) else {
+      return nil
+    }
+    return uprightImage(image)?.cgImage
+  }
+
   /// Redraw an image onto the upright grid described by its EXIF orientation.
   ///
   /// `UIImage.cgImage` is the raw stored buffer and ignores `imageOrientation`,
-  /// while `imageToTensor` goes through `resizeImage`, whose `draw(in:)` honours
-  /// it. Cropping the raw buffer therefore cuts from the wrong region for any
-  /// rotated photo: the on-screen box looks right while the crop MiewID embeds
-  /// is wrong. Normalising here puts the crop on the same grid as the detector,
-  /// the overlay, and every EXIF-aware viewer.
+  /// while every EXIF-aware viewer applies it. Cropping or resampling the raw
+  /// buffer therefore works from the wrong region for any rotated photo: the
+  /// on-screen box looks right while the crop MiewID embeds is wrong.
+  /// Normalising here puts the tensor and the crop on the same grid as the
+  /// detector, the overlay, and every EXIF-aware viewer.
   ///
   /// Returns the input unchanged when it is already upright.
   static func uprightImage(_ image: UIImage) -> UIImage? {
@@ -159,11 +169,72 @@ class ImageTensorModule: NSObject {
     }
   }
 
-  static func resizeImage(_ image: UIImage, to size: CGSize) -> UIImage? {
-    let renderer = UIGraphicsImageRenderer(size: size)
-    return renderer.image { _ in
-      image.draw(in: CGRect(origin: .zero, size: size))
+  /// Resize toward (targetWidth, targetHeight) via repeated 2x downscales
+  /// before the final step, instead of one large single-shot resize.
+  ///
+  /// Resampling is only accurate for moderate size reductions. For a large
+  /// reduction in one step (e.g. a multi-megapixel photo down to 440x440 --
+  /// 10x or more per axis), high-frequency detail gets folded into different
+  /// values instead of being averaged away, unlike PIL/torchvision's `Resize`
+  /// (used by the Python reference pipeline), which applies antialiasing before
+  /// subsampling. Repeated halving approximates that antialiasing with a
+  /// box/mipmap-style filter chain, so no individual step exceeds 2x.
+  ///
+  /// This mirrors `progressiveResize` in the Android module, which was verified
+  /// against Project Ganesha's golden on-device parity test (E13-4). The
+  /// structure matches; the per-step filter still does not (Android resamples
+  /// bilinearly via `createScaledBitmap`, this resamples at `.high`), so this
+  /// buys a shared algorithm, not byte parity.
+  ///
+  /// What it definitely fixes is device dependence. The previous single-shot
+  /// path resampled through `UIGraphicsImageRenderer`'s default format, whose
+  /// scale is the screen scale, so the same photo yielded a different tensor on
+  /// a 2x and a 3x iPhone -- measured up to 49/255 on a channel for a small
+  /// crop. See kb/wildlife-reid-mobile/outputs/reports/2026-09-13-ios-resize-parity-measurement.md.
+  static func progressiveResize(_ source: CGImage, width targetWidth: Int, height targetHeight: Int) -> CGImage? {
+    guard targetWidth > 0, targetHeight > 0 else {
+      return nil
     }
+    if source.width == targetWidth && source.height == targetHeight {
+      return source
+    }
+
+    var current = source
+    while current.width > targetWidth * 2 && current.height > targetHeight * 2 {
+      let nextWidth = max(targetWidth, current.width / 2)
+      let nextHeight = max(targetHeight, current.height / 2)
+      guard let next = redraw(current, width: nextWidth, height: nextHeight) else {
+        return nil
+      }
+      current = next
+    }
+
+    return redraw(current, width: targetWidth, height: targetHeight)
+  }
+
+  /// Resample into an exactly `width` x `height` pixel buffer.
+  ///
+  /// Deliberately not `UIGraphicsImageRenderer`, whose default format uses the
+  /// screen scale: on a 3x device that renders a 440x440 request into a
+  /// 1320x1320 buffer, so the halving chain above would measure the wrong
+  /// dimensions and `extractNchw` would resample the oversized result a second
+  /// time. Sizing the context in pixels keeps the chain honest.
+  private static func redraw(_ cgImage: CGImage, width: Int, height: Int) -> CGImage? {
+    guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+          let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 4 * width,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ) else {
+      return nil
+    }
+    context.interpolationQuality = .high
+    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()
   }
 
   static func extractNchw(

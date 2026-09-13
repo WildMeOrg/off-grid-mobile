@@ -23,19 +23,11 @@
                                     <constraint firstAttribute="height" constant="128" id="hgt-Lg-pK1"/>
                                 </constraints>
                             </imageView>
-                            <label opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Off Grid" textAlignment="center" lineBreakMode="middleTruncation" baselineAdjustment="alignBaselines" minimumFontSize="18" translatesAutoresizingMaskIntoConstraints="NO" id="GJd-Yh-RWb">
-                                <rect key="frame" x="0.0" y="367" width="375" height="43"/>
-                                <fontDescription key="fontDescription" type="boldSystem" pointSize="36"/>
-                                <nil key="highlightedColor"/>
-                            </label>
                         </subviews>
                         <color key="backgroundColor" systemColor="systemBackgroundColor" cocoaTouchSystemColor="whiteColor"/>
                         <constraints>
                             <constraint firstItem="Lgp-K1-zXR" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="cxL-gp-K1z"/>
-                            <constraint firstItem="Lgp-K1-zXR" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="-40" id="cyL-gp-K1z"/>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="top" secondItem="Lgp-K1-zXR" secondAttribute="bottom" constant="16" id="tpG-Jd-Yh1"/>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="leading" secondItem="Bcu-3y-fUS" secondAttribute="leading" id="ldG-Jd-Yh1"/>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="trailing" secondItem="Bcu-3y-fUS" secondAttribute="trailing" id="trG-Jd-Yh1"/>
+                            <constraint firstItem="Lgp-K1-zXR" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="cyL-gp-K1z"/>
                         </constraints>
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
                     </view>

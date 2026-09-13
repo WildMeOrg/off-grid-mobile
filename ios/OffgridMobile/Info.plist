@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>EleBook</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -43,12 +43,8 @@
 	<string>This app needs access to your camera to photograph wildlife for on-device identification.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app uses your location to tag observations with GPS coordinates. Location is optional and only captured while you are recording an observation.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>This app needs access to your microphone for voice-to-text transcription using Whisper.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app needs access to your photo library to attach images to conversations.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>This app uses on-device speech recognition to transcribe voice input.</string>
+	<string>This app needs access to your photo library to import wildlife photographs for on-device identification.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIAppFonts</key>

@@ -944,10 +944,11 @@ final class ImageTensorModuleTests: XCTestCase {
 
   // MARK: - EXIF orientation parity
   //
-  // `imageToTensor` goes through `resizeImage`, whose `draw(in:)` applies
-  // `imageOrientation`; `cropImage` used the raw `cgImage`, which does not.
-  // For any rotated photo that put the detector and the crop on different
-  // grids, so MiewID embedded the wrong pixels while the overlay looked fine.
+  // Both bridge methods now decode through `loadUprightImage`, which applies
+  // `imageOrientation` once. Before that, `cropImage` read the raw `cgImage`,
+  // which does not. For any rotated photo that put the detector and the crop
+  // on different grids, so MiewID embedded the wrong pixels while the overlay
+  // looked fine.
 
   /// A renderer pinned to scale 1, so the backing buffer is exactly the
   /// requested pixel size. The default format uses the screen scale, which
@@ -1159,6 +1160,98 @@ final class ImageTensorModuleTests: XCTestCase {
         assertColor(values, pixel: pixel, planeSize: 256,
                     color: uprightQuadrants[orientation - 1][quadrant], orientation: orientation)
       }
+    }
+  }
+
+  // MARK: - Progressive resize parity
+  //
+  // Android reduces toward the target in repeated 2x steps so a large
+  // downscale is antialiased rather than aliased, and that chain was pinned by
+  // Project Ganesha's golden on-device parity test (E13-4). iOS resized in one
+  // shot through a screen-scaled renderer, so the same photo produced a
+  // different tensor -- and therefore different MiewID candidates -- per
+  // platform.
+
+  /// Alternating 1px stripes: the finest detail a resampler can carry, so a
+  /// large reduction either averages them to mid-grey or aliases toward the
+  /// extremes.
+  private func makeStripedImage(width: Int, height: Int) -> UIImage {
+    return unscaledRenderer(width: width, height: height).image { ctx in
+      for column in 0..<width {
+        (column % 2 == 0 ? UIColor.black : UIColor.white).setFill()
+        ctx.fill(CGRect(x: column, y: 0, width: 1, height: height))
+      }
+    }
+  }
+
+  func testProgressiveResizeReturnsExactTargetPixelDimensions() throws {
+    // The old renderer used UIGraphicsImageRenderer's default format, whose
+    // scale is the screen scale, so a 50x50 request produced a 100x100 or
+    // 150x150 buffer on a 2x or 3x simulator.
+    let source = try XCTUnwrap(makeStripedImage(width: 800, height: 400).cgImage)
+    let resized = try XCTUnwrap(ImageTensorModule.progressiveResize(source, width: 50, height: 50))
+
+    XCTAssertEqual(resized.width, 50)
+    XCTAssertEqual(resized.height, 50)
+  }
+
+  func testProgressiveResizeReturnsSourceUntouchedAtTargetSize() throws {
+    let source = try XCTUnwrap(makeSplitImage(width: 4, height: 2).cgImage)
+    let resized = try XCTUnwrap(ImageTensorModule.progressiveResize(source, width: 4, height: 2))
+
+    XCTAssertEqual(resized.width, 4)
+    XCTAssertEqual(resized.height, 2)
+  }
+
+  func testProgressiveResizeRejectsNonPositiveTarget() throws {
+    let source = try XCTUnwrap(makeSplitImage(width: 4, height: 2).cgImage)
+
+    XCTAssertNil(ImageTensorModule.progressiveResize(source, width: 0, height: 8))
+    XCTAssertNil(ImageTensorModule.progressiveResize(source, width: 8, height: -1))
+  }
+
+  func testProgressiveResizeAveragesFineDetailRatherThanAliasing() throws {
+    // 640 -> 20 is a 32x reduction per axis. Every output pixel covers an equal
+    // number of black and white columns, so the area average is mid-grey.
+    let source = try XCTUnwrap(makeStripedImage(width: 640, height: 640).cgImage)
+    let resized = try XCTUnwrap(ImageTensorModule.progressiveResize(source, width: 20, height: 20))
+    let tensor = try XCTUnwrap(ImageTensorModule.extractNchw(
+      from: resized, width: 20, height: 20,
+      mean: [0, 0, 0], std: [1, 1, 1], scale: 1.0, bgr: false
+    ))
+
+    for (index, value) in tensor.enumerated() {
+      XCTAssertEqual(value, 127.5, accuracy: 24.0, "channel sample \(index) aliased")
+    }
+  }
+
+  func testImageToTensorAveragesFineDetailThroughTheBridge() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString + ".png")
+    let image = makeStripedImage(width: 640, height: 640)
+    try XCTUnwrap(image.pngData()).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let completed = expectation(description: "tensor")
+    var tensor: [Double]?
+    module.imageToTensor(
+      url.path, width: 20, height: 20, mean: [0, 0, 0], std: [1, 1, 1],
+      scale: 1.0, channelOrder: "RGB",
+      resolver: { value in
+        tensor = value as? [Double]
+        completed.fulfill()
+      },
+      rejecter: { _, message, _ in
+        XCTFail("striped tensor rejected: \(message ?? "unknown")")
+        completed.fulfill()
+      }
+    )
+    waitForExpectations(timeout: 10)
+
+    let values = try XCTUnwrap(tensor)
+    XCTAssertEqual(values.count, 3 * 20 * 20)
+    for (index, value) in values.enumerated() {
+      XCTAssertEqual(value, 127.5, accuracy: 24.0, "channel sample \(index) aliased")
     }
   }
 
