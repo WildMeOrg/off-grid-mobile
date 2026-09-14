@@ -29,42 +29,52 @@ export const SignInScreen: React.FC = () => {
 
   const handleSignIn = useCallback(async () => {
     setIsSigningIn(true);
+    // The spinner is cleared in `finally`, not on each exit path. Clearing it
+    // per-branch meant any early return added later -- or a profile call that
+    // never settled -- left it spinning with no error and no way to retry.
     try {
-      await entraAuthService.signIn();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn('[SignInScreen] Sign-in failed or was cancelled:', message);
-      // A cancelled sign-in (user backed out of the browser) is not an
-      // error worth alerting about -- only surface a message for real
-      // failures the person might be able to act on.
-      if (!/cancel/i.test(message)) {
-        Alert.alert('Sign-in failed', message);
+      try {
+        await entraAuthService.signIn();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn('[SignInScreen] Sign-in failed or was cancelled:', message);
+        // A cancelled sign-in (user backed out of the browser) is not an
+        // error worth alerting about -- only surface a message for real
+        // failures the person might be able to act on.
+        if (!/cancel/i.test(message)) {
+          Alert.alert('Sign-in failed', message);
+        }
+        return;
       }
+
+      const profileResult = await ganeshaApiClient.getUserProfile();
+
+      if (profileResult.ok) {
+        if (navigation.canGoBack()) {
+          navigation.goBack();
+        } else {
+          navigation.replace('Main');
+        }
+        return;
+      }
+
+      if (profileResult.code === 'not-found') {
+        // First sign-in for this identity -- mirrors the web app's
+        // select-role step. Replace, not push, so a later "back" from
+        // SelectRole doesn't return to a completed SignIn screen.
+        navigation.replace('SelectRole');
+        return;
+      }
+
+      // The session itself is already stored at this point, so say so --
+      // otherwise "Sign-in failed" invites a pointless second sign-in.
+      Alert.alert(
+        'Signed in, but your profile could not be loaded',
+        `${profileResult.message}. Your session is saved -- try again from Settings.`,
+      );
+    } finally {
       setIsSigningIn(false);
-      return;
     }
-
-    const profileResult = await ganeshaApiClient.getUserProfile();
-    setIsSigningIn(false);
-
-    if (profileResult.ok) {
-      if (navigation.canGoBack()) {
-        navigation.goBack();
-      } else {
-        navigation.replace('Main');
-      }
-      return;
-    }
-
-    if (profileResult.code === 'not-found') {
-      // First sign-in for this identity -- mirrors the web app's
-      // select-role step. Replace, not push, so a later "back" from
-      // SelectRole doesn't return to a completed SignIn screen.
-      navigation.replace('SelectRole');
-      return;
-    }
-
-    Alert.alert('Sign-in failed', `Could not load your profile: ${profileResult.message}`);
   }, [navigation]);
 
   return (
