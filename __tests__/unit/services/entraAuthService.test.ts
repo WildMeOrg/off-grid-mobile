@@ -13,7 +13,11 @@ jest.mock('react-native-keychain', () => ({
 
 import { authorize, refresh, revoke } from 'react-native-app-auth';
 import * as Keychain from 'react-native-keychain';
-import { entraAuthService } from '../../../src/services/entraAuthService';
+import {
+  entraAuthService,
+  ENTRA_INTERACTIVE_TIMEOUT_MS,
+  ENTRA_REFRESH_TIMEOUT_MS,
+} from '../../../src/services/entraAuthService';
 import { ENTRA_ISSUER, ENTRA_MOBILE_CLIENT_ID, ENTRA_REDIRECT_URL, ENTRA_SCOPES } from '../../../src/config/entraAuth';
 import { deploymentConfig, getTokenStorageService } from '../../../src/config/deployment';
 
@@ -232,5 +236,56 @@ describe('entraAuthService.getValidAccessToken', () => {
 
     expect(await entraAuthService.getValidAccessToken()).toBeNull();
     expect(mockResetGenericPassword).toHaveBeenCalledWith({ service: TOKEN_SERVICE });
+  });
+});
+
+describe('entraAuthService deadlines', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // AppAuth bounds neither leg. On a marginal link the token exchange stalls
+  // after the browser has already closed, so authorize() never settles and the
+  // sign-in screen spins forever with nothing to report.
+  it('gives up on an interactive sign-in that never settles', async () => {
+    jest.useFakeTimers();
+    mockAuthorize.mockImplementation(() => new Promise(() => {}));
+
+    const pending = entraAuthService.signIn();
+    const assertion = expect(pending).rejects.toThrow(/timed out after 180s/);
+    await jest.advanceTimersByTimeAsync(ENTRA_INTERACTIVE_TIMEOUT_MS);
+    await assertion;
+  });
+
+  it('gives up on a token refresh that never settles', async () => {
+    jest.useFakeTimers();
+    mockGetGenericPassword.mockResolvedValue({
+      username: 'entra-tokens',
+      password: JSON.stringify({
+        accessToken: 'stale',
+        refreshToken: 'refresh-me',
+        idToken: 'id',
+        accessTokenExpirationDate: new Date(Date.now() - 1000).toISOString(),
+      }),
+    });
+    mockRefresh.mockImplementation(() => new Promise(() => {}));
+
+    const pending = entraAuthService.getValidAccessToken();
+    await jest.advanceTimersByTimeAsync(ENTRA_REFRESH_TIMEOUT_MS);
+
+    // A refresh that cannot complete is reported as "no valid session" rather
+    // than thrown, matching how an expired refresh token is already handled.
+    await expect(pending).resolves.toBeNull();
+  });
+
+  it('does not interfere with a sign-in that completes normally', async () => {
+    mockAuthorize.mockResolvedValue({
+      accessToken: 'a',
+      refreshToken: 'r',
+      idToken: 'i',
+      accessTokenExpirationDate: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+
+    await expect(entraAuthService.signIn()).resolves.toMatchObject({ accessToken: 'a' });
   });
 });

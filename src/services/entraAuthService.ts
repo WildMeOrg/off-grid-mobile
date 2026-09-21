@@ -22,6 +22,37 @@ export interface StoredEntraTokens {
   accessTokenExpirationDate: string;
 }
 
+/**
+ * AppAuth has no deadline of its own on either leg of the flow, and on a
+ * marginal link the token exchange is where it stalls: the browser closes, the
+ * authorization code comes back, and the POST that trades it for tokens never
+ * completes. `authorize()` then never settles, so the screen spins forever with
+ * nothing to report. Measured in the field on a link at -74dBm with 40% beacon
+ * loss, which is an ordinary reserve connection, not an edge case.
+ *
+ * The interactive budget is deliberately long: it has to cover reading a
+ * password manager and approving an MFA push on another device, so cutting it
+ * short would fail people who were succeeding. It exists to bound the hang, not
+ * to be hit in normal use. Refresh is non-interactive and gets far less.
+ */
+export const ENTRA_INTERACTIVE_TIMEOUT_MS = 180_000;
+export const ENTRA_REFRESH_TIMEOUT_MS = 30_000;
+
+async function withDeadline<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs / 1000}s`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const authConfig: AuthConfiguration = {
   issuer: ENTRA_ISSUER,
   clientId: ENTRA_MOBILE_CLIENT_ID,
@@ -43,7 +74,11 @@ const authConfig: AuthConfiguration = {
 class EntraAuthService {
   /** Runs the interactive sign-in flow (opens the system browser) and stores the resulting tokens. */
   async signIn(): Promise<StoredEntraTokens> {
-    const result = await authorize(authConfig);
+    const result = await withDeadline(
+      authorize(authConfig),
+      ENTRA_INTERACTIVE_TIMEOUT_MS,
+      'Sign-in',
+    );
     const tokens: StoredEntraTokens = {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken || null,
@@ -104,7 +139,11 @@ class EntraAuthService {
     }
 
     try {
-      const refreshed = await refresh(authConfig, { refreshToken: tokens.refreshToken });
+      const refreshed = await withDeadline(
+        refresh(authConfig, { refreshToken: tokens.refreshToken }),
+        ENTRA_REFRESH_TIMEOUT_MS,
+        'Token refresh',
+      );
       const newTokens: StoredEntraTokens = {
         accessToken: refreshed.accessToken,
         // Entra does not always return a new refresh token on a refresh
