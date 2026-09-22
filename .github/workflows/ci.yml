@@ -45,7 +45,11 @@ jobs:
           # not cover, so every job touching the SDK died in setup with
           # "sdkmanager failed with exit code 1". typecheck was the only job
           # left standing because it is the only one that never installs it.
-          cmdline-tools-version: '13.0'
+          #
+          # This input takes the published build number, not a version string:
+          # 11076708 is command-line tools 11.0. A version like '13.0' is not a
+          # download the action can resolve and fails with a bare HTTP 404.
+          cmdline-tools-version: 11076708
 
       - name: Install dependencies
         run: npm ci
@@ -107,7 +111,11 @@ jobs:
           # not cover, so every job touching the SDK died in setup with
           # "sdkmanager failed with exit code 1". typecheck was the only job
           # left standing because it is the only one that never installs it.
-          cmdline-tools-version: '13.0'
+          #
+          # This input takes the published build number, not a version string:
+          # 11076708 is command-line tools 11.0. A version like '13.0' is not a
+          # download the action can resolve and fails with a bare HTTP 404.
+          cmdline-tools-version: 11076708
 
       - name: Setup Ruby dependencies
         uses: ruby/setup-ruby@v1
@@ -193,7 +201,11 @@ jobs:
           # not cover, so every job touching the SDK died in setup with
           # "sdkmanager failed with exit code 1". typecheck was the only job
           # left standing because it is the only one that never installs it.
-          cmdline-tools-version: '13.0'
+          #
+          # This input takes the published build number, not a version string:
+          # 11076708 is command-line tools 11.0. A version like '13.0' is not a
+          # download the action can resolve and fails with a bare HTTP 404.
+          cmdline-tools-version: 11076708
 
       - name: Install dependencies
         run: npm ci
