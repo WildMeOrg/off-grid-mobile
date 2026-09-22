@@ -1,6 +1,7 @@
 export type DownloadErrorCode =
   | 'http-error'
   | 'network-error'
+  | 'timeout'
   | 'length-mismatch'
   | 'checksum-mismatch'
   | 'cancelled'
@@ -18,6 +19,8 @@ export type DownloadOutcome =
 export interface DownloadOptions {
   onProgress?: (bytesWritten: number, contentLength: number) => void;
   signal?: AbortSignal;
+  /** Maximum time without download activity before stopping the native job. */
+  inactivityTimeoutMs?: number;
   /** Total attempts including the first (default 3). */
   maxAttempts?: number;
   /** Base for exponential backoff with full jitter (default 1000 ms). */

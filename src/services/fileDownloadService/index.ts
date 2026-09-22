@@ -21,9 +21,11 @@ import logger from '../../utils/logger';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_BASE_BACKOFF_MS = 1000;
+export const DEFAULT_DOWNLOAD_INACTIVITY_TIMEOUT_MS = 60_000;
 
 const RETRYABLE_CODES: ReadonlySet<DownloadErrorCode> = new Set([
   'network-error',
+  'timeout',
   'length-mismatch',
   'checksum-mismatch',
 ]);
@@ -69,6 +71,53 @@ async function cleanupStaging(stagingPath: string): Promise<void> {
   }
 }
 
+interface DownloadInactivityWatchdog {
+  promise: Promise<never>;
+  reset: () => void;
+  didTimeout: () => boolean;
+  clear: () => void;
+}
+
+function createDownloadInactivityWatchdog(
+  timeoutMs: number,
+  onTimeout: () => void,
+): DownloadInactivityWatchdog {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let rejectTimeout: (error: Error) => void = () => {};
+  const promise = new Promise<never>((_resolve, reject) => {
+    rejectTimeout = reject;
+  });
+  const reset = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      onTimeout();
+      rejectTimeout(
+        new Error(`download received no data for ${timeoutMs / 1000}s`),
+      );
+    }, timeoutMs);
+  };
+  return {
+    promise,
+    reset,
+    didTimeout: () => timedOut,
+    clear: () => clearTimeout(timer),
+  };
+}
+
+function downloadFailure(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  timedOut: boolean,
+): DownloadOutcome {
+  if (signal?.aborted) {
+    return failure('cancelled', 'download cancelled');
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return failure(timedOut ? 'timeout' : 'network-error', message);
+}
+
 /** Where a download comes from and where it lands, staged and final. */
 export interface DownloadTarget {
   source: DownloadSource;
@@ -86,20 +135,38 @@ async function attemptDownload(
   await cleanupStaging(stagingPath);
 
   let contentLengthFromServer = 0;
-  const { jobId, promise } = RNFS.downloadFile({
+  const inactivityTimeoutMs =
+    opts.inactivityTimeoutMs ?? DEFAULT_DOWNLOAD_INACTIVITY_TIMEOUT_MS;
+  let jobId = -1;
+  const stopDownload = () => {
+    if (jobId >= 0) {
+      RNFS.stopDownload(jobId);
+    }
+  };
+  const watchdog = createDownloadInactivityWatchdog(
+    inactivityTimeoutMs,
+    stopDownload,
+  );
+  const download = RNFS.downloadFile({
     fromUrl: source.url,
     toFile: stagingPath,
     headers: source.headers,
-    progressDivider: 5,
+    progressInterval: 1000,
     begin: (res: { contentLength: number }) => {
       contentLengthFromServer = res.contentLength;
+      watchdog.reset();
     },
     progress: (res: { bytesWritten: number; contentLength: number }) => {
+      watchdog.reset();
       opts.onProgress?.(res.bytesWritten, res.contentLength);
     },
+    readTimeout: inactivityTimeoutMs,
   });
+  jobId = download.jobId;
+  const { promise } = download;
+  watchdog.reset();
 
-  const onAbort = () => RNFS.stopDownload(jobId);
+  const onAbort = stopDownload;
   if (opts.signal?.aborted) {
     // The signal aborted before we could listen — an aborted signal never
     // fires 'abort' again, so stop the job directly.
@@ -110,17 +177,12 @@ async function attemptDownload(
 
   let statusCode: number;
   try {
-    const result = await promise;
+    const result = await Promise.race([promise, watchdog.promise]);
     statusCode = result.statusCode;
   } catch (error) {
-    if (opts.signal?.aborted) {
-      return failure('cancelled', 'download cancelled');
-    }
-    return failure(
-      'network-error',
-      error instanceof Error ? error.message : String(error),
-    );
+    return downloadFailure(error, opts.signal, watchdog.didTimeout());
   } finally {
+    watchdog.clear();
     opts.signal?.removeEventListener('abort', onAbort);
   }
 
