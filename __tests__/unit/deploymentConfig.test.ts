@@ -22,7 +22,7 @@ const LONG_DEPLOYMENT = {
   tenantId: '77777777-7777-4777-8777-777777777777',
   mobileClientId: '88888888-8888-4888-8888-888888888888',
   apiClientId: '99999999-9999-4999-8999-999999999999',
-  redirectUrl: 'org.ganesha.elebook://oauthredirect',
+  redirectUrl: 'org.ganesha.elebook://oauthredirect/',
 };
 
 describe('deployment token storage', () => {
@@ -40,8 +40,14 @@ describe('deployment token storage', () => {
 
   it('derives the documented service name for the example deployment', () => {
     // Pinned on purpose: changing the derivation orphans tokens stored by earlier builds.
+    //
+    // This value moved once, when redirectUrl gained the trailing slash that
+    // iOS needs to accept its own OAuth callback. Anyone already signed in is
+    // signed out by that change and has to sign in again; observations, packs
+    // and the local database are untouched. iOS loses nothing, never having
+    // been able to sign in at all.
     expect(getTokenStorageService(example)).toBe(
-      'org.ganesha.elebook.entra.92eda79296364b345b9cb882a37983eb15de4e4ac4d7c6aa511b6d2d5ed543ed',
+      'org.ganesha.elebook.entra.df2facb18aac60dd0a72437d48a060371a0843065ae7fa0383d7a47f1d1a355b',
     );
   });
 
