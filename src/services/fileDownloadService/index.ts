@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import RNFS from 'react-native-fs';
 import type {
   DownloadErrorCode,
@@ -152,6 +153,15 @@ async function attemptDownload(
     toFile: stagingPath,
     headers: source.headers,
     progressInterval: 1000,
+    // A foreground session stops the moment iOS suspends the app, so the screen
+    // locking part-way through an 80MB model was enough to kill the transfer --
+    // no data would arrive, and the watchdog below would correctly but uselessly
+    // report a stall. Upstream removed the foreground path for this reason
+    // ("use background downloads exclusively"); the rewrite of this service lost
+    // the flag while AppDelegate kept handling
+    // handleEventsForBackgroundURLSession for a session nothing was asking for.
+    // Ignored on Android, which has its own long-running download path.
+    background: true,
     begin: (res: { contentLength: number }) => {
       contentLengthFromServer = res.contentLength;
       watchdog.reset();
@@ -165,6 +175,16 @@ async function attemptDownload(
   jobId = download.jobId;
   const { promise } = download;
   watchdog.reset();
+
+  // JS timers do not run while iOS has the app suspended, so a watchdog armed
+  // before suspension fires the instant the app wakes -- against a background
+  // transfer that may have been progressing the whole time. Re-arm on wake and
+  // judge inactivity from then, not from whenever the app went away.
+  const appStateSubscription = AppState.addEventListener('change', nextState => {
+    if (nextState === 'active') {
+      watchdog.reset();
+    }
+  });
 
   const onAbort = stopDownload;
   if (opts.signal?.aborted) {
@@ -183,6 +203,7 @@ async function attemptDownload(
     return downloadFailure(error, opts.signal, watchdog.didTimeout());
   } finally {
     watchdog.clear();
+    appStateSubscription.remove();
     opts.signal?.removeEventListener('abort', onAbort);
   }
 

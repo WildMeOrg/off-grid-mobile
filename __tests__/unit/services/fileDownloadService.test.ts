@@ -96,3 +96,43 @@ describe('fileDownloadService inactivity timeout', () => {
     await expect(pending).resolves.toMatchObject({ ok: true });
   });
 });
+
+describe('background transfer', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // A foreground URLSession stops when iOS suspends the app, so locking the
+  // screen part-way through an 80MB model killed the transfer. Upstream had
+  // already removed the foreground path ("use background downloads
+  // exclusively"); this service was rewritten without the flag while
+  // AppDelegate kept servicing handleEventsForBackgroundURLSession.
+  it('asks for a background session so a locked screen does not kill the transfer', async () => {
+    mockDownloadFile.mockReturnValue({
+      jobId: 1,
+      promise: Promise.resolve({ statusCode: 200, bytesWritten: 1000 }),
+    });
+
+    await downloadFileWithIntegrityCheck(target);
+
+    expect(mockDownloadFile).toHaveBeenCalledWith(
+      expect.objectContaining({ background: true }),
+    );
+  });
+
+  it('re-arms the inactivity deadline when the app returns to the foreground', async () => {
+    const { AppState } = require('react-native');
+    const addEventListener = jest.spyOn(AppState, 'addEventListener');
+    mockDownloadFile.mockReturnValue({
+      jobId: 1,
+      promise: Promise.resolve({ statusCode: 200, bytesWritten: 1000 }),
+    });
+
+    await downloadFileWithIntegrityCheck(target);
+
+    // Suspended JS timers fire late on wake; without this the watchdog would
+    // trip against a transfer that progressed fine while backgrounded.
+    expect(addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+    addEventListener.mockRestore();
+  });
+});
