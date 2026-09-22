@@ -252,7 +252,9 @@ describe('entraAuthService deadlines', () => {
     mockAuthorize.mockImplementation(() => new Promise(() => {}));
 
     const pending = entraAuthService.signIn();
-    const assertion = expect(pending).rejects.toThrow(/timed out after 180s/);
+    const assertion = (async () => {
+      await expect(pending).rejects.toThrow(/timed out after 180s/);
+    })();
     await jest.advanceTimersByTimeAsync(ENTRA_INTERACTIVE_TIMEOUT_MS);
     await assertion;
   });
