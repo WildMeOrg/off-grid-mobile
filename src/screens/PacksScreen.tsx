@@ -23,6 +23,9 @@ import {
 import { ensureSignedIn } from '../utils/authGate';
 import logger from '../utils/logger';
 import { createStyles } from './PacksScreen.styles';
+import { PackDownloadStatus } from './PackDownloadStatus';
+import { progressReporter } from './packDownloadProgress';
+import type { DownloadProgress } from './packDownloadProgress';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -36,6 +39,22 @@ type PackUpdateState =
   | 'current'
   | 'available'
   | 'unavailable';
+
+const UPDATE_STATUS_TEXT: Record<PackUpdateState, string> = {
+  unchecked: 'Update status not checked',
+  checking: 'Checking for updates...',
+  current: 'Up to date',
+  available: 'Update available',
+  unavailable: 'Unable to check for updates',
+};
+
+const UPDATE_BUTTON_TITLE: Record<PackUpdateState, string> = {
+  unchecked: 'Check for Updates',
+  checking: 'Checking for Updates',
+  current: 'Check Again',
+  available: 'Update to Latest Pack',
+  unavailable: 'Check for Updates',
+};
 
 function formatBytes(bytes: number): string {
   if (bytes < MB) {
@@ -77,6 +96,8 @@ export const PacksScreen: React.FC = () => {
   const { packs, miewidModel } = useWildlifeStore();
   const preferGpuModel = useAppStore((s) => s.preferGpuModel);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] =
+    useState<DownloadProgress | null>(null);
   const [packUpdateState, setPackUpdateState] =
     useState<PackUpdateState>('unchecked');
   const updateInFlight = useRef(false);
@@ -154,7 +175,9 @@ export const PacksScreen: React.FC = () => {
       // replaced before installing a pack from a newer embedding space.
       let modelForPack = miewidModel;
       if (!installedModelIsCurrent) {
-        modelForPack = await prepareMiewidModel(resolvedSource.source);
+        modelForPack = await prepareMiewidModel(resolvedSource.source, {
+          onProgress: progressReporter('model', setDownloadProgress),
+        });
         if (modelForPack.status !== 'ready') {
           Alert.alert(
             'Download failed',
@@ -166,9 +189,10 @@ export const PacksScreen: React.FC = () => {
         }
       }
 
+      setDownloadProgress({ stage: 'pack', bytesWritten: 0, contentLength: 0 });
       const packResult = await acquireLatestPack(
         GANESHA_PROJECT_ID,
-        {},
+        { onProgress: progressReporter('pack', setDownloadProgress) },
         modelForPack ?? undefined,
       );
       if (!packResult.ok) {
@@ -189,6 +213,7 @@ export const PacksScreen: React.FC = () => {
     } finally {
       updateInFlight.current = false;
       setIsDownloading(false);
+      setDownloadProgress(null);
     }
   }, [miewidModel, navigation, preferGpuModel]);
 
@@ -208,27 +233,6 @@ export const PacksScreen: React.FC = () => {
       updateInFlight.current = false;
     }
   }, [navigation, refreshPackStatus]);
-
-  const updateStatusText = isDownloading
-    ? 'Downloading and validating update...'
-    : effectivePackUpdateState === 'checking'
-      ? 'Checking for updates...'
-      : effectivePackUpdateState === 'current'
-        ? 'Up to date'
-        : effectivePackUpdateState === 'available'
-          ? 'Update available'
-          : effectivePackUpdateState === 'unavailable'
-            ? 'Unable to check for updates'
-            : 'Update status not checked';
-
-  const updateButtonTitle =
-    effectivePackUpdateState === 'current'
-      ? 'Check Again'
-      : effectivePackUpdateState === 'available'
-        ? 'Update to Latest Pack'
-        : effectivePackUpdateState === 'checking'
-          ? 'Checking for Updates'
-          : 'Check for Updates';
 
   const renderPack = ({
     item,
@@ -277,6 +281,12 @@ export const PacksScreen: React.FC = () => {
             style={styles.downloadButton}
             testID="download-pack-button"
           />
+          {isDownloading ? (
+            <PackDownloadStatus
+              progress={downloadProgress}
+              style={styles.downloadStatus}
+            />
+          ) : null}
         </View>
       ) : (
         <FlatList
@@ -287,15 +297,19 @@ export const PacksScreen: React.FC = () => {
           showsVerticalScrollIndicator={false}
           ListFooterComponent={
             <View style={styles.updateSection}>
-              <Text
-                style={styles.updateStatus}
-                accessibilityLiveRegion="polite"
-                testID="pack-update-status"
-              >
-                {updateStatusText}
-              </Text>
+              {isDownloading ? (
+                <PackDownloadStatus progress={downloadProgress} />
+              ) : (
+                <Text
+                  style={styles.updateStatus}
+                  accessibilityLiveRegion="polite"
+                  testID="pack-update-status"
+                >
+                  {UPDATE_STATUS_TEXT[effectivePackUpdateState]}
+                </Text>
+              )}
               <Button
-                title={updateButtonTitle}
+                title={UPDATE_BUTTON_TITLE[effectivePackUpdateState]}
                 onPress={
                   effectivePackUpdateState === 'available'
                     ? handleDownloadPack
