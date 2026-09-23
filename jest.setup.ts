@@ -255,6 +255,8 @@ jest.mock('react-native-fs', () => ({
     promise: Promise.resolve({ statusCode: 200, bytesWritten: 1000 }),
   })),
   stopDownload: jest.fn(),
+  resumeDownload: jest.fn(),
+  completeHandlerIOS: jest.fn(() => Promise.resolve()),
   exists: jest.fn(() => Promise.resolve(false)),
   mkdir: jest.fn(() => Promise.resolve()),
   unlink: jest.fn(() => Promise.resolve()),
