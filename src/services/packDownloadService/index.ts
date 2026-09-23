@@ -19,6 +19,7 @@ import {
   removeIfExists,
 } from './candidate';
 import type { PreparedPack } from './candidate';
+import { waitForForeground } from '../../utils/appForeground';
 import logger from '../../utils/logger';
 
 /**
@@ -204,6 +205,10 @@ async function acquireLatestPackInternal(
   opts: DownloadOptions = {},
   preparedModel?: MiewIDModelRecord,
 ): Promise<PackAcquisitionOutcome> {
+  // The model download that precedes this can finish while the phone is
+  // locked and wake the app in the background, where the token read behind
+  // getLatestPack fails as "Not signed in" -- see waitForForeground.
+  await waitForForeground();
   const resolved = await ganeshaApiClient.getLatestPack(projectId);
   if (!resolved.ok) {
     return resolved;

@@ -1,4 +1,3 @@
-import { AppState } from 'react-native';
 import RNFS from 'react-native-fs';
 import type {
   DownloadErrorCode,
@@ -6,6 +5,12 @@ import type {
   DownloadOutcome,
   DownloadSource,
 } from './types';
+import {
+  failure,
+  finishBackgroundEvents,
+  runNativeDownload,
+} from './nativeDownload';
+import { waitForForeground } from '../../utils/appForeground';
 import logger from '../../utils/logger';
 
 /**
@@ -22,7 +27,10 @@ import logger from '../../utils/logger';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_BASE_BACKOFF_MS = 1000;
-export const DEFAULT_DOWNLOAD_INACTIVITY_TIMEOUT_MS = 60_000;
+export {
+  DEFAULT_DOWNLOAD_INACTIVITY_TIMEOUT_MS,
+  MAX_IN_PLACE_RESUMES,
+} from './nativeDownload';
 
 const RETRYABLE_CODES: ReadonlySet<DownloadErrorCode> = new Set([
   'network-error',
@@ -55,12 +63,6 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
     );
   });
 
-const failure = (
-  code: DownloadErrorCode,
-  message: string,
-  httpStatus?: number,
-): DownloadOutcome => ({ ok: false, code, message, httpStatus });
-
 const dirnameOf = (path: string): string =>
   path.substring(0, path.lastIndexOf('/'));
 
@@ -72,53 +74,6 @@ async function cleanupStaging(stagingPath: string): Promise<void> {
   }
 }
 
-interface DownloadInactivityWatchdog {
-  promise: Promise<never>;
-  reset: () => void;
-  didTimeout: () => boolean;
-  clear: () => void;
-}
-
-function createDownloadInactivityWatchdog(
-  timeoutMs: number,
-  onTimeout: () => void,
-): DownloadInactivityWatchdog {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  let rejectTimeout: (error: Error) => void = () => {};
-  const promise = new Promise<never>((_resolve, reject) => {
-    rejectTimeout = reject;
-  });
-  const reset = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      timedOut = true;
-      onTimeout();
-      rejectTimeout(
-        new Error(`download received no data for ${timeoutMs / 1000}s`),
-      );
-    }, timeoutMs);
-  };
-  return {
-    promise,
-    reset,
-    didTimeout: () => timedOut,
-    clear: () => clearTimeout(timer),
-  };
-}
-
-function downloadFailure(
-  error: unknown,
-  signal: AbortSignal | undefined,
-  timedOut: boolean,
-): DownloadOutcome {
-  if (signal?.aborted) {
-    return failure('cancelled', 'download cancelled');
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return failure(timedOut ? 'timeout' : 'network-error', message);
-}
-
 /** Where a download comes from and where it lands, staged and final. */
 export interface DownloadTarget {
   source: DownloadSource;
@@ -126,87 +81,18 @@ export interface DownloadTarget {
   finalPath: string;
 }
 
-async function attemptDownload(
+interface CompletedTransfer {
+  statusCode: number;
+  contentLengthFromServer: number;
+}
+
+async function verifyAndInstall(
   target: DownloadTarget,
+  transfer: CompletedTransfer,
   opts: DownloadOptions,
 ): Promise<DownloadOutcome> {
   const { source, stagingPath, finalPath } = target;
-  await RNFS.mkdir(dirnameOf(stagingPath));
-  await RNFS.mkdir(dirnameOf(finalPath));
-  await cleanupStaging(stagingPath);
-
-  let contentLengthFromServer = 0;
-  const inactivityTimeoutMs =
-    opts.inactivityTimeoutMs ?? DEFAULT_DOWNLOAD_INACTIVITY_TIMEOUT_MS;
-  let jobId = -1;
-  const stopDownload = () => {
-    if (jobId >= 0) {
-      RNFS.stopDownload(jobId);
-    }
-  };
-  const watchdog = createDownloadInactivityWatchdog(
-    inactivityTimeoutMs,
-    stopDownload,
-  );
-  const download = RNFS.downloadFile({
-    fromUrl: source.url,
-    toFile: stagingPath,
-    headers: source.headers,
-    progressInterval: 1000,
-    // A foreground session stops the moment iOS suspends the app, so the screen
-    // locking part-way through an 80MB model was enough to kill the transfer --
-    // no data would arrive, and the watchdog below would correctly but uselessly
-    // report a stall. Upstream removed the foreground path for this reason
-    // ("use background downloads exclusively"); the rewrite of this service lost
-    // the flag while AppDelegate kept handling
-    // handleEventsForBackgroundURLSession for a session nothing was asking for.
-    // Ignored on Android, which has its own long-running download path.
-    background: true,
-    begin: (res: { contentLength: number }) => {
-      contentLengthFromServer = res.contentLength;
-      watchdog.reset();
-    },
-    progress: (res: { bytesWritten: number; contentLength: number }) => {
-      watchdog.reset();
-      opts.onProgress?.(res.bytesWritten, res.contentLength);
-    },
-    readTimeout: inactivityTimeoutMs,
-  });
-  jobId = download.jobId;
-  const { promise } = download;
-  watchdog.reset();
-
-  // JS timers do not run while iOS has the app suspended, so a watchdog armed
-  // before suspension fires the instant the app wakes -- against a background
-  // transfer that may have been progressing the whole time. Re-arm on wake and
-  // judge inactivity from then, not from whenever the app went away.
-  const appStateSubscription = AppState.addEventListener('change', nextState => {
-    if (nextState === 'active') {
-      watchdog.reset();
-    }
-  });
-
-  const onAbort = stopDownload;
-  if (opts.signal?.aborted) {
-    // The signal aborted before we could listen — an aborted signal never
-    // fires 'abort' again, so stop the job directly.
-    onAbort();
-  } else {
-    opts.signal?.addEventListener('abort', onAbort, { once: true });
-  }
-
-  let statusCode: number;
-  try {
-    const result = await Promise.race([promise, watchdog.promise]);
-    statusCode = result.statusCode;
-  } catch (error) {
-    return downloadFailure(error, opts.signal, watchdog.didTimeout());
-  } finally {
-    watchdog.clear();
-    appStateSubscription.remove();
-    opts.signal?.removeEventListener('abort', onAbort);
-  }
-
+  const { statusCode, contentLengthFromServer } = transfer;
   if (opts.signal?.aborted) {
     return failure('cancelled', 'download cancelled');
   }
@@ -225,6 +111,9 @@ async function attemptDownload(
       `downloaded ${actualSize} bytes, expected ${expectedSize}`,
     );
   }
+  // Progress events are throttled to one a second and none follows the last
+  // chunk, so report completion before the SHA-256 pass, which takes seconds.
+  opts.onProgress?.(actualSize, actualSize);
 
   const actualHash = (await RNFS.hash(stagingPath, 'sha256')).toLowerCase();
   if (actualHash !== source.expectedSha256.toLowerCase()) {
@@ -249,6 +138,28 @@ async function attemptDownload(
     sha256: actualHash,
     sizeBytes: actualSize,
   };
+}
+
+async function attemptDownload(
+  target: DownloadTarget,
+  opts: DownloadOptions,
+): Promise<DownloadOutcome> {
+  const { source, stagingPath, finalPath } = target;
+  // A retry, or the next artifact after one finished while the phone was
+  // locked, would otherwise start from the background -- see waitForForeground.
+  await waitForForeground();
+  await RNFS.mkdir(dirnameOf(stagingPath));
+  await RNFS.mkdir(dirnameOf(finalPath));
+  await cleanupStaging(stagingPath);
+
+  const transfer = await runNativeDownload(source, stagingPath, opts);
+  try {
+    return transfer.ok
+      ? await verifyAndInstall(target, transfer, opts)
+      : transfer.failure;
+  } finally {
+    finishBackgroundEvents(transfer.jobId);
+  }
 }
 
 /**
