@@ -23,7 +23,7 @@ index 5ddd941..058d47e 100644
                   };
  
 diff --git a/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java b/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java
-index 351ac06..5aa4ea4 100644
+index 351ac06..b7f5be0 100644
 --- a/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java
 +++ b/node_modules/react-native-fs/android/src/main/java/com/rnfs/RNFSManager.java
 @@ -638,6 +638,7 @@ public class RNFSManager extends ReactContextBaseJavaModule {
@@ -34,6 +34,17 @@ index 351ac06..5aa4ea4 100644
  
        promise.resolve(statMap);
      } catch (Exception ex) {
+@@ -975,7 +976,9 @@ public class RNFSManager extends ReactContextBaseJavaModule {
+       return;
+     }
+ 
+-    promise.reject(null, ex.getMessage());
++    // React Native's Kotlin Promise.reject throws on a null code; thrown from the download
++    // thread, that crashed the app whenever a download failed.
++    promise.reject("EUNSPECIFIED", ex.getMessage(), ex);
+   }
+ 
+   private void rejectFileNotFound(Promise promise, String filepath) {
 diff --git a/node_modules/react-native-fs/index.d.ts b/node_modules/react-native-fs/index.d.ts
 index da3fa7d..dc6f060 100644
 --- a/node_modules/react-native-fs/index.d.ts
