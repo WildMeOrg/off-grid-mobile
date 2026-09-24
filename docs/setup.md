@@ -115,7 +115,9 @@ npm run ios
 
 Apple toolchain compatibility is unresolved: the Gemfile pins `xcodeproj < 1.26.0`, while [Podfile.lock](../ios/Podfile.lock) records CocoaPods 1.17.0. Review that pin before adopting Xcode 16. These steps and a clean iOS build have not been verified on the Windows preparation host; do not treat them as a passing macOS build recipe.
 
-The [Xcode project](../ios/OffgridMobile.xcodeproj/project.pbxproj) leaves `DEVELOPMENT_TEAM` empty. A maintainer must supply their own team and provisioning for real-device builds or archives. Its marketing version is `0.0.58` and does not track the version in [package.json](../package.json) or [android/app/build.gradle](../android/app/build.gradle); iOS release metadata needs separate review.
+The [Xcode project](../ios/OffgridMobile.xcodeproj/project.pbxproj) leaves `DEVELOPMENT_TEAM` empty. A maintainer must supply their own team and provisioning for real-device builds or archives. Its `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set by hand to match `versionName` and `versionCode` in [android/app/build.gradle](../android/app/build.gradle); a version bump has to touch both files, and nothing in CI checks that they still agree. `MARKETING_VERSION` carries the full pre-release string, which `CFBundleShortVersionString` does not accept for App Store submission; ad-hoc and AltStore builds are unaffected.
+
+Debug builds install as `org.ganesha.elebook.dev`, matching the Android `applicationIdSuffix`, so a development build sits alongside a tester's field build instead of replacing it. The OAuth redirect scheme stays `org.ganesha.elebook` for both, because it matches on scheme rather than bundle identifier.
 
 ## Local checks
 

@@ -21,7 +21,10 @@ fi
 if [ -n "$STAGED_SWIFT" ]; then
   if command -v swiftlint >/dev/null 2>&1; then
     echo "▶ SwiftLint (staged files)..."
-    echo "$STAGED_SWIFT" | tr '\n' '\0' | xargs -0 swiftlint lint --quiet
+    # --force-exclude: passing explicit paths otherwise overrides the `excluded`
+    # list in .swiftlint.yml, so the hook would lint files CI does not (notably
+    # ios/OffgridMobileTests) and fail on violations no merge gate enforces.
+    echo "$STAGED_SWIFT" | tr '\n' '\0' | xargs -0 swiftlint lint --quiet --force-exclude
   else
     echo "⚠️  SwiftLint not installed — skipping Swift lint. Install: brew install swiftlint"
   fi
