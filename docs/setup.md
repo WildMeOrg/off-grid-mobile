@@ -13,7 +13,7 @@ The app needs exactly six public strings. Start with [deployment.example.json](.
   "tenantId": "11111111-1111-4111-8111-111111111111",
   "mobileClientId": "22222222-2222-4222-8222-222222222222",
   "apiClientId": "33333333-3333-4333-8333-333333333333",
-  "redirectUrl": "org.ganesha.elebook://oauthredirect"
+  "redirectUrl": "org.ganesha.elebook://oauthredirect/"
 }
 ```
 
@@ -24,7 +24,7 @@ The app needs exactly six public strings. Start with [deployment.example.json](.
 | `tenantId` | Tenant UUID. |
 | `mobileClientId` | Native public-client registration UUID. |
 | `apiClientId` | API registration UUID. |
-| `redirectUrl` | Exactly `org.ganesha.elebook://oauthredirect`, matching the native registrations. |
+| `redirectUrl` | Exactly `org.ganesha.elebook://oauthredirect/`, matching the native registrations. The trailing slash is required: Entra appends it to a custom-scheme redirect that has no path, and AppAuth-iOS compares the callback path against this value, so omitting it makes iOS reject its own callback and hang. The pre-fix spelling without the slash is accepted and normalised. |
 
 Pack acquisition has a narrower limit: project IDs and pack version strings must fit within 40 UTF-16 code units. For live setup, keep `projectId` within that limit even though configuration accepts up to 128 characters; see [pack candidate paths](../src/services/packDownloadService/candidate.ts). Identities are digested into short directory names, so their length does not affect on-device paths.
 

@@ -133,6 +133,48 @@ describe('SignInScreen', () => {
     expect(mockGoBack).not.toHaveBeenCalled();
   });
 
+  // The spinner used to be cleared on each exit path rather than in a
+  // `finally`. A profile call that never settled -- ganeshaApiClient had no
+  // request timeout -- left the button spinning forever, with no error and no
+  // way to retry. In the field that looked like the app had simply frozen.
+
+  it('clears the spinner after a failed profile lookup so sign-in can be retried', async () => {
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSignIn.mockResolvedValue({ accessToken: 'a', refreshToken: 'r', idToken: 'i', accessTokenExpirationDate: '' });
+    mockGetUserProfile.mockResolvedValue({ ok: false, code: 'timeout', message: 'Request timed out after 30s' });
+
+    const { getByTestId, queryByText } = render(<SignInScreen />);
+    fireEvent.press(getByTestId('sign-in-button'));
+
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalled());
+    // The mocked Button renders "<title> (loading)" while its spinner shows.
+    expect(queryByText(/\(loading\)/)).toBeNull();
+  });
+
+  it('clears the spinner after a cancelled sign-in', async () => {
+    mockSignIn.mockRejectedValue(new Error('User cancelled flow'));
+
+    const { getByTestId, queryByText } = render(<SignInScreen />);
+    fireEvent.press(getByTestId('sign-in-button'));
+
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalled());
+    await waitFor(() => expect(queryByText(/\(loading\)/)).toBeNull());
+  });
+
+  it('says the session was saved when only the profile lookup failed', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockSignIn.mockResolvedValue({ accessToken: 'a', refreshToken: 'r', idToken: 'i', accessTokenExpirationDate: '' });
+    mockGetUserProfile.mockResolvedValue({ ok: false, code: 'timeout', message: 'Request timed out after 30s' });
+
+    const { getByTestId } = render(<SignInScreen />);
+    fireEvent.press(getByTestId('sign-in-button'));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+    const [title, body] = alertSpy.mock.calls[0];
+    expect(title).not.toMatch(/sign-in failed/i);
+    expect(body).toMatch(/session is saved/i);
+  });
+
   it('alerts on a real sign-in failure but not on a cancelled sign-in', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockSignIn.mockRejectedValue(new Error('User cancelled flow'));
