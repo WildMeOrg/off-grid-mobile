@@ -69,4 +69,13 @@ export const createStyles = (colors: ThemeColors, shadows: ThemeShadows) => ({
     marginTop: SPACING.lg,
     minWidth: 220,
   },
+  downloadStatus: {
+    marginTop: SPACING.md,
+  },
+  downloadDetail: {
+    ...TYPOGRAPHY.meta,
+    color: colors.textMuted,
+    textAlign: 'center' as const,
+    marginTop: SPACING.xs,
+  },
 });

@@ -149,6 +149,10 @@ const latestModelSource = {
   format: 'onnx' as const,
 };
 
+const withProgress = expect.objectContaining({ onProgress: expect.any(Function) });
+
+type ReportProgress = (bytesWritten: number, contentLength: number) => void;
+
 describe('PacksScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -364,8 +368,8 @@ describe('PacksScreen', () => {
         await waitFor(() => expect(getByText('Update available')).toBeTruthy());
         fireEvent.press(getByTestId('update-pack-button'));
 
-        await waitFor(() => expect(mockAcquireLatestPack).toHaveBeenCalledWith('example-project', {}, readyModel));
-        expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource);
+        await waitFor(() => expect(mockAcquireLatestPack).toHaveBeenCalledWith('example-project', withProgress, readyModel));
+        expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource, withProgress);
       },
     );
 
@@ -443,7 +447,7 @@ describe('PacksScreen', () => {
       await waitFor(() =>
         expect(mockAcquireLatestPack).toHaveBeenCalledWith(
           'example-project',
-          {},
+          withProgress,
           readyModel,
         ),
       );
@@ -543,7 +547,7 @@ describe('PacksScreen', () => {
       await waitFor(() =>
         expect(mockAcquireLatestPack).toHaveBeenCalledWith(
           'example-project',
-          {},
+          withProgress,
           readyModel,
         ),
       );
@@ -561,7 +565,7 @@ describe('PacksScreen', () => {
       await waitFor(() =>
         expect(mockAcquireLatestPack).toHaveBeenCalledWith(
           'example-project',
-          {},
+          withProgress,
           readyModel,
         ),
       );
@@ -687,11 +691,11 @@ describe('PacksScreen', () => {
       await waitFor(() =>
         expect(mockAcquireLatestPack).toHaveBeenCalledWith(
           'example-project',
-          {},
+          withProgress,
           readyModel,
         ),
       );
-      expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource);
+      expect(mockPrepareMiewidModel).toHaveBeenCalledWith(latestModelSource, withProgress);
     });
 
     it('alerts and stops when resolving the model source fails', async () => {
@@ -737,6 +741,50 @@ describe('PacksScreen', () => {
       fireEvent.press(getByTestId('download-pack-button'));
 
       await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+    });
+
+    it('shows model and then pack progress, with a keep-open hint, while downloading', async () => {
+      let reportModel: ReportProgress | undefined;
+      let finishModel: ((record: MiewIDModelRecord) => void) | undefined;
+      mockPrepareMiewidModel.mockImplementation(
+        (_source: unknown, opts?: { onProgress?: ReportProgress }) => {
+          reportModel = opts?.onProgress;
+          return new Promise(resolve => {
+            finishModel = resolve;
+          });
+        },
+      );
+      let reportPack: ReportProgress | undefined;
+      let finishPack: ((result: { ok: true; pack: EmbeddingPack }) => void) | undefined;
+      mockAcquireLatestPack.mockImplementation(
+        (_projectId: string, opts?: { onProgress?: ReportProgress }) => {
+          reportPack = opts?.onProgress;
+          return new Promise(resolve => {
+            finishPack = resolve;
+          });
+        },
+      );
+
+      const { getByTestId, getByText, queryByTestId } = render(<PacksScreen />);
+      fireEvent.press(getByTestId('download-pack-button'));
+      await waitFor(() => expect(reportModel).toBeDefined());
+      expect(getByText('Preparing download...')).toBeTruthy();
+
+      act(() => reportModel?.(85_684_745, 204_011_297));
+      expect(getByText('Downloading identification model...')).toBeTruthy();
+      expect(getByText('42% (81.7 of 194.6 MB)')).toBeTruthy();
+      expect(getByText('Keep EleBook open until this finishes.')).toBeTruthy();
+
+      await act(async () => finishModel?.(readyModel));
+      await waitFor(() => expect(reportPack).toBeDefined());
+      expect(getByText('Downloading embedding pack...')).toBeTruthy();
+      expect(queryByTestId('pack-download-amount')).toBeNull();
+
+      act(() => reportPack?.(228_081_202, 228_081_202));
+      expect(getByText('Verifying and installing embedding pack...')).toBeTruthy();
+
+      await act(async () => finishPack?.({ ok: true, pack: createPack() }));
+      await waitFor(() => expect(queryByTestId('pack-download-status')).toBeNull());
     });
   });
 });
