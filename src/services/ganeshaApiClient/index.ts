@@ -32,6 +32,18 @@ import logger from '../../utils/logger';
  * needs different headers (`x-ms-blob-type`) than any call here. See
  * `services/syncEngine` for that step.
  */
+/**
+ * Every request gets a deadline. Without one, a connection that is accepted
+ * but never answered -- a captive portal, a dropped cellular handover, a
+ * backend that stalls mid-response -- leaves the promise pending forever.
+ * Callers render that as a spinner with no way out and no error to report,
+ * which is exactly what it looked like in the field on iOS.
+ *
+ * 30s is deliberately generous: these calls are small JSON reads, but they
+ * can be the first request after an Azure Function cold start.
+ */
+export const GANESHA_REQUEST_TIMEOUT_MS = 30_000;
+
 class GaneshaApiClient {
   async getLatestModel(modelName: string): Promise<GaneshaApiResult<LatestModelInfo>> {
     return this.request<LatestModelInfo>(`/models/${encodeURIComponent(modelName)}/latest`);
@@ -81,6 +93,8 @@ class GaneshaApiClient {
     }
 
     let response: Response;
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), GANESHA_REQUEST_TIMEOUT_MS);
     try {
       response = await fetch(`${GANESHA_API_BASE_URL}${path}`, {
         method: init.method ?? 'GET',
@@ -89,11 +103,23 @@ class GaneshaApiClient {
           ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        signal: controller.signal,
       });
     } catch (error) {
+      // A timeout surfaces as an AbortError from the signal above. Report it
+      // separately from a refused connection: one means "no network", the
+      // other means "the server took the call and went quiet", and the person
+      // in the field can act on that difference.
+      if (controller.signal.aborted) {
+        const message = `Request timed out after ${GANESHA_REQUEST_TIMEOUT_MS / 1000}s`;
+        logger.warn(`[GaneshaApiClient] ${path} timed out`);
+        return { ok: false, code: 'timeout', message };
+      }
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(`[GaneshaApiClient] Network error for ${path}: ${message}`);
       return { ok: false, code: 'network-error', message };
+    } finally {
+      clearTimeout(deadline);
     }
 
     const errorCode = this.errorCodeFor(response.status);

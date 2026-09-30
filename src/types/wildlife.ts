@@ -30,6 +30,15 @@ export interface MiewIDModelRecord {
   status: MiewIDModelStatus;
   verifiedAt: string | null;
   format: ModelFormat;
+  /**
+   * Why a non-ready record ended up that way, for display. 'missing' covers
+   * every failure that is not an integrity mismatch -- a stalled transfer, an
+   * unreachable host, a 404, a cancellation -- and collapsing those into one
+   * word leaves the person in the field with nothing to act on. Null when the
+   * model is ready or still downloading, and absent on records written by
+   * builds from before it existed.
+   */
+  failureReason?: string | null;
 }
 
 // === Embedding Pack Types ===

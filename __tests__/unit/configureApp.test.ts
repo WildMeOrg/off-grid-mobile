@@ -123,3 +123,26 @@ describe('deployment configuration', () => {
     expect(fs.statSync(generated).mtimeMs).toBe(0);
   });
 });
+
+describe('configureApp redirect normalisation', () => {
+  // Entra returns a custom-scheme redirect with a trailing slash appended.
+  // AppAuth-iOS compares the callback path against the configured redirect, so
+  // storing it without the slash makes iOS reject its own callback and hang.
+  // Android matches on scheme alone and is unaffected either way.
+  it('stores the redirect exactly as Entra returns it, with the trailing slash', () => {
+    const config = validateConfig({ ...example, redirectUrl: 'org.ganesha.elebook://oauthredirect/' });
+
+    expect(config.redirectUrl).toBe('org.ganesha.elebook://oauthredirect/');
+  });
+
+  it('normalises the pre-fix spelling so existing configs self-heal', () => {
+    const config = validateConfig({ ...example, redirectUrl: 'org.ganesha.elebook://oauthredirect' });
+
+    expect(config.redirectUrl).toBe('org.ganesha.elebook://oauthredirect/');
+  });
+
+  it('still rejects a redirect belonging to a different app', () => {
+    expect(() => validateConfig({ ...example, redirectUrl: 'different.app://oauthredirect/' }))
+      .toThrow(/redirectUrl/);
+  });
+});

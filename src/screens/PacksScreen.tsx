@@ -158,7 +158,9 @@ export const PacksScreen: React.FC = () => {
         if (modelForPack.status !== 'ready') {
           Alert.alert(
             'Download failed',
-            `The MiewID model could not be prepared (status: ${modelForPack.status}).`,
+            modelForPack.failureReason
+              ? `The MiewID model could not be prepared: ${modelForPack.failureReason}`
+              : `The MiewID model could not be prepared (status: ${modelForPack.status}).`,
           );
           return;
         }

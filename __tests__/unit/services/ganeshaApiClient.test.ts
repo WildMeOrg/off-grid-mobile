@@ -4,7 +4,7 @@ jest.mock('../../../src/services/entraAuthService', () => ({
   entraAuthService: { getValidAccessToken: jest.fn() },
 }));
 
-import { ganeshaApiClient } from '../../../src/services/ganeshaApiClient';
+import { ganeshaApiClient, GANESHA_REQUEST_TIMEOUT_MS } from '../../../src/services/ganeshaApiClient';
 import { entraAuthService } from '../../../src/services/entraAuthService';
 
 const mockGetValidAccessToken = entraAuthService.getValidAccessToken as jest.Mock;
@@ -308,5 +308,53 @@ describe('ganeshaApiClient.createUserProfile', () => {
         body: JSON.stringify(payload),
       }),
     );
+  });
+});
+
+describe('ganeshaApiClient request deadline', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // Without a deadline a connection that is accepted but never answered leaves
+  // the promise pending forever, which the screens render as a permanent
+  // spinner with no error -- the iOS field symptom this guards against.
+  it('aborts and reports a timeout when the server never answers', async () => {
+    jest.useFakeTimers();
+    mockFetch.mockImplementation(
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
+        }),
+    );
+
+    const pending = ganeshaApiClient.getUserProfile();
+    // Async advance: the request awaits getValidAccessToken() before it ever
+    // arms the deadline, so a synchronous advance would fire against a timer
+    // that does not exist yet and the promise would hang.
+    await jest.advanceTimersByTimeAsync(GANESHA_REQUEST_TIMEOUT_MS);
+    const result = await pending;
+
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ code: 'timeout' });
+  });
+
+  it('passes an abort signal on every request', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(200, {}));
+
+    await ganeshaApiClient.getUserProfile();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+  });
+
+  it('still reports a plain network error as network-error, not a timeout', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('Network request failed'));
+
+    const result = await ganeshaApiClient.getUserProfile();
+
+    expect(result).toMatchObject({ code: 'network-error', message: 'Network request failed' });
   });
 });

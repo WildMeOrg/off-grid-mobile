@@ -10,7 +10,29 @@ const CONFIG_FIELDS = [
   'redirectUrl',
 ];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const NATIVE_REDIRECT = 'org.ganesha.elebook://oauthredirect';
+/**
+ * The trailing slash is load-bearing on iOS, and is not cosmetic.
+ *
+ * Entra normalises a custom-scheme redirect that has no path, so a request
+ * sent as `org.ganesha.elebook://oauthredirect` comes back as
+ * `org.ganesha.elebook://oauthredirect/`. AppAuth-iOS compares the callback
+ * against the configured redirect component by component, including path, so
+ * '' != '/' and it rejects the callback. It then discards the rejection --
+ * OIDExternalUserAgentIOS ignores the BOOL from
+ * resumeExternalUserAgentFlowWithURL: -- and the authorization session waits
+ * forever. Sign-in spins with no error and no way to retry.
+ *
+ * Android never noticed: its intent filter matches on the scheme alone
+ * (appAuthRedirectScheme in android/app/build.gradle), so the extra slash is
+ * irrelevant there. Storing the redirect exactly as Entra returns it makes the
+ * comparison succeed on iOS and changes nothing on Android.
+ *
+ * Confirmed on an iPhone 15 Pro: the callback arrives as
+ * `org.ganesha.elebook://oauthredirect/?code=...` with path '/'.
+ */
+const NATIVE_REDIRECT = 'org.ganesha.elebook://oauthredirect/';
+/** Pre-fix spelling. Accepted and normalised so existing configs self-heal. */
+const NATIVE_REDIRECT_LEGACY = 'org.ganesha.elebook://oauthredirect';
 
 function validateApiUrl(value) {
   let url;
@@ -48,6 +70,9 @@ function validateConfig(value) {
   }
   if (!/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(config.projectId)) {
     throw new Error('projectId must contain only letters, digits, underscores, and hyphens.');
+  }
+  if (config.redirectUrl === NATIVE_REDIRECT_LEGACY) {
+    config.redirectUrl = NATIVE_REDIRECT;
   }
   if (config.redirectUrl !== NATIVE_REDIRECT) {
     throw new Error('redirectUrl must match the native redirect registered by this app.');

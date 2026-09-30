@@ -51,6 +51,7 @@ const candidateRecord = (
   status: 'downloading',
   verifiedAt: null,
   format: source.format,
+  failureReason: null,
   ...overrides,
 });
 
@@ -63,8 +64,9 @@ export async function prepareMiewidModel(
   try {
     outcome = await modelDownloadService.downloadModel(source, opts);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     logger.error('[MiewIDModelManager] Model preparation threw:', error);
-    return candidateRecord(source, { status: 'missing' });
+    return candidateRecord(source, { status: 'missing', failureReason: message });
   }
 
   if (outcome.ok) {
@@ -80,12 +82,18 @@ export async function prepareMiewidModel(
     logger.error(
       `[MiewIDModelManager] Downloaded model failed verification: ${outcome.message}`,
     );
-    return candidateRecord(source, { status: 'corrupt' });
+    return candidateRecord(source, {
+      status: 'corrupt',
+      failureReason: outcome.message,
+    });
   }
   logger.warn(
     `[MiewIDModelManager] Model preparation failed (${outcome.code}): ${outcome.message}`,
   );
-  return candidateRecord(source, { status: 'missing' });
+  return candidateRecord(source, {
+    status: 'missing',
+    failureReason: `${outcome.code}: ${outcome.message}`,
+  });
 }
 
 /**

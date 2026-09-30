@@ -313,3 +313,62 @@ describe('checkEmbeddingModelCompatibility', () => {
     );
   });
 });
+
+describe('prepareMiewidModel failure reporting', () => {
+  const SOURCE = {
+    name: 'miewid',
+    version: '4.2.0',
+    url: 'https://example.org/miewid-4.2.onnx',
+    expectedSha256: 'abc',
+    expectedSizeBytes: 2000,
+    format: 'onnx' as const,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // 'missing' covers a stalled transfer, an unreachable host, a 404 and a
+  // cancellation alike. Collapsing them lost the only detail the person in the
+  // field could act on -- the screen said "status: missing" for an 80MB model
+  // download that had repeatedly stalled on a weak link.
+  it('keeps the underlying reason when a download fails', async () => {
+    mockDownloadModel.mockResolvedValue({
+      ok: false,
+      code: 'timeout',
+      message: 'download received no data for 60s',
+    });
+
+    const candidate = await prepareMiewidModel(SOURCE);
+
+    expect(candidate.status).toBe('missing');
+    expect(candidate.failureReason).toBe('timeout: download received no data for 60s');
+  });
+
+  it('keeps the verification detail when a download is corrupt', async () => {
+    mockDownloadModel.mockResolvedValue({
+      ok: false,
+      code: 'checksum-mismatch',
+      message: 'expected abc, got def',
+    });
+
+    const candidate = await prepareMiewidModel(SOURCE);
+
+    expect(candidate.status).toBe('corrupt');
+    expect(candidate.failureReason).toBe('expected abc, got def');
+  });
+
+  it('leaves the reason null on a model that prepared cleanly', async () => {
+    mockDownloadModel.mockResolvedValue({
+      ok: true,
+      path: '/models/miewid.onnx',
+      sha256: 'abc',
+      sizeBytes: 1024,
+    });
+
+    const candidate = await prepareMiewidModel(SOURCE);
+
+    expect(candidate.status).toBe('ready');
+    expect(candidate.failureReason).toBeNull();
+  });
+});

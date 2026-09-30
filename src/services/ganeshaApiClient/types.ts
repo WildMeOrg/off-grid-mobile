@@ -93,6 +93,7 @@ export interface CreateUserProfilePayload {
  */
 export type GaneshaApiErrorCode =
   | 'network-error'
+  | 'timeout'
   | 'unauthenticated'
   | 'unauthorized'
   | 'not-found'
